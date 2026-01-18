@@ -1,0 +1,31 @@
+.
+├── LICENSE
+├── README.md
+├── config
+│   ├── agents.yaml
+│   └── watchlist.yaml
+├── docs
+│   ├── AGENTS.md
+│   ├── AI_AGENT_QUICKSTART.md
+│   └── DEPLOYMENT.md
+├── notebooks
+│   └── agent_development_example.ipynb
+├── project_structure.txt
+├── requirements.txt
+├── scripts
+│   ├── run_daily.py
+│   └── run_weekly.py
+├── src
+│   ├── agents
+│   │   ├── __init__.py
+│   │   └── base.py
+│   ├── app.py
+│   ├── core
+│   │   └── grok_client.py
+│   ├── data
+│   │   ├── market.py
+│   │   └── news.py
+│   └── utils
+└── tests
+
+10 directories, 18 files

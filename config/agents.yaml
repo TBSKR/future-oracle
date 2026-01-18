@@ -28,6 +28,13 @@ agents:
     filters:
       min_relevance_score: 6
       max_items_per_run: 20
+    status: "✅ IMPLEMENTED (Week 1)"
+    features:
+      - "NewsAPI + RSS feed integration"
+      - "Keyword-based relevance scoring (1-10)"
+      - "Filters for public stocks + private companies + breakthrough keywords"
+      - "Outputs structured JSON with matched keywords and categories"
+      - "Integrated into Daily Brief page"
     
   analyst:
     role: "Deep Alpha Analyst"
