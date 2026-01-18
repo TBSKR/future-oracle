@@ -7,10 +7,10 @@ Each agent is specialized for a specific task in the intelligence workflow.
 
 from .base import BaseAgent
 from .scout import ScoutAgent
+from .analyst import AnalystAgent
 
 # Import agents as they are implemented
 # from .orchestrator import OrchestratorAgent
-# from .analyst import AnalystAgent
 # from .curator import CuratorAgent
 # from .reporter import ReporterAgent
 # from .guardian import GuardianAgent
@@ -19,8 +19,8 @@ from .scout import ScoutAgent
 __all__ = [
     'BaseAgent',
     'ScoutAgent',
+    'AnalystAgent',
     # 'OrchestratorAgent',
-    # 'AnalystAgent',
     # 'CuratorAgent',
     # 'ReporterAgent',
     # 'GuardianAgent',

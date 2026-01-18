@@ -37,6 +37,14 @@ agents:
       - "Integrated into Daily Brief page"
     
   analyst:
+    status: "✅ IMPLEMENTED (Week 2)"
+    features:
+      - "Grok 4 API integration with retry logic"
+      - "Structured output parsing (impact score, sentiment, price targets, risks, scenarios)"
+      - "Fallback analysis when API unavailable"
+      - "High-impact signal filtering (threshold: 8/10)"
+      - "Integrated into Daily Brief with expandable cards"
+      - "28 unit tests covering all parsing logic"
     role: "Deep Alpha Analyst"
     goal: "Generate deep investment insights and impact predictions using Grok 4"
     backstory: |
