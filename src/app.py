@@ -111,6 +111,60 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
+# ========== HELPER FUNCTIONS ==========
+
+def _display_analysis_card(analysis: dict, is_high_impact: bool = False):
+    """Helper function to display analysis card"""
+    impact = analysis.get("impact_score", 0)
+    sentiment = analysis.get("sentiment", "neutral")
+    
+    # Sentiment emoji
+    sentiment_emoji = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(sentiment, "➡️")
+    
+    # Impact badge
+    if is_high_impact:
+        badge = "⚡"
+    elif impact >= 7:
+        badge = "⭐"
+    else:
+        badge = "📌"
+    
+    title = f"{badge} {impact}/10 {sentiment_emoji} - {analysis['article_title']}"
+    
+    with st.expander(title, expanded=is_high_impact):
+        col_a, col_b = st.columns([2, 1])
+        
+        with col_a:
+            st.markdown(f"**Source:** {analysis.get('article_source', 'Unknown')}")
+            st.markdown(f"**Sentiment:** {sentiment.upper()}")
+            st.markdown(f"**30-Day Outlook:** {analysis.get('price_target_30d', 'N/A')}")
+            st.markdown(f"**Key Insight:** {analysis.get('key_insight', 'N/A')}")
+            
+            if analysis.get('article_url'):
+                st.markdown(f"[Read full article]({analysis['article_url']})")
+        
+        with col_b:
+            st.metric("Impact Score", f"{impact}/10")
+            st.metric("Relevance", f"{analysis.get('relevance_score', 0)}/10")
+            
+            if analysis.get("is_fallback"):
+                st.warning("⚠️ Fallback analysis")
+        
+        # Risks
+        risks = analysis.get("risks", [])
+        if risks:
+            st.markdown("**⚠️ Risk Flags:**")
+            for risk in risks:
+                st.markdown(f"- {risk}")
+        
+        # Scenarios
+        scenarios = analysis.get("scenarios", {})
+        if scenarios and any(v != "N/A" for v in scenarios.values()):
+            st.markdown("**🔮 Long-Term Scenarios:**")
+            for timeframe, scenario in scenarios.items():
+                if scenario != "N/A":
+                    st.markdown(f"- **{timeframe}:** {scenario}")
+
 # ========== OVERVIEW PAGE ==========
 if page == "📊 Overview":
     st.header("Market Overview")
@@ -355,58 +409,6 @@ elif page == "📰 Daily Brief":
             st.subheader(f"📰 Breakthrough Signals ({len(regular)})")
             for analysis in regular:
                 _display_analysis_card(analysis, is_high_impact=False)
-
-def _display_analysis_card(analysis: dict, is_high_impact: bool = False):
-    """Helper function to display analysis card"""
-    impact = analysis.get("impact_score", 0)
-    sentiment = analysis.get("sentiment", "neutral")
-    
-    # Sentiment emoji
-    sentiment_emoji = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(sentiment, "➡️")
-    
-    # Impact badge
-    if is_high_impact:
-        badge = "⚡"
-    elif impact >= 7:
-        badge = "⭐"
-    else:
-        badge = "📌"
-    
-    title = f"{badge} {impact}/10 {sentiment_emoji} - {analysis['article_title']}"
-    
-    with st.expander(title, expanded=is_high_impact):
-        col_a, col_b = st.columns([2, 1])
-        
-        with col_a:
-            st.markdown(f"**Source:** {analysis.get('article_source', 'Unknown')}")
-            st.markdown(f"**Sentiment:** {sentiment.upper()}")
-            st.markdown(f"**30-Day Outlook:** {analysis.get('price_target_30d', 'N/A')}")
-            st.markdown(f"**Key Insight:** {analysis.get('key_insight', 'N/A')}")
-            
-            if analysis.get('article_url'):
-                st.markdown(f"[Read full article]({analysis['article_url']})")
-        
-        with col_b:
-            st.metric("Impact Score", f"{impact}/10")
-            st.metric("Relevance", f"{analysis.get('relevance_score', 0)}/10")
-            
-            if analysis.get("is_fallback"):
-                st.warning("⚠️ Fallback analysis")
-        
-        # Risks
-        risks = analysis.get("risks", [])
-        if risks:
-            st.markdown("**⚠️ Risk Flags:**")
-            for risk in risks:
-                st.markdown(f"- {risk}")
-        
-        # Scenarios
-        scenarios = analysis.get("scenarios", {})
-        if scenarios and any(v != "N/A" for v in scenarios.values()):
-            st.markdown("**🔮 Long-Term Scenarios:**")
-            for timeframe, scenario in scenarios.items():
-                if scenario != "N/A":
-                    st.markdown(f"- **{timeframe}:** {scenario}")
 
 # ========== PORTFOLIO PAGE ==========
 elif page == "💼 Portfolio":
