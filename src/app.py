@@ -27,6 +27,7 @@ from core.portfolio import PortfolioManager
 from core.grok_client import GrokClient
 from agents.scout import ScoutAgent
 from agents.analyst import AnalystAgent
+from agents.forecaster import ForecasterAgent
 
 # Page config
 st.set_page_config(
@@ -492,17 +493,198 @@ elif page == "💼 Portfolio":
 
 # ========== FORECASTS PAGE ==========
 elif page == "🔮 Forecasts":
-    st.header("Scenario Forecasts")
-    st.info("🚧 Week 4: Forecaster Agent will generate long-term wealth projections here.")
+    st.header("🔮 Long-Term Wealth Forecasts")
+    st.markdown("**Personalized scenarios for your exponential wealth journey**")
     
-    st.markdown("""
-    ### Coming Soon:
-    - **Base Case:** Conservative 12% annual returns
-    - **Bull Case:** Aggressive 25% annual returns  
-    - **Super-Bull Case:** Breakthrough 50% annual returns
-    - **Age-based milestones:** Projections for age 30, 35, 40
-    - **Monte Carlo simulations:** Probability distributions
-    """)
+    # Import Forecaster
+    from agents.forecaster import ForecasterAgent
+    
+    # Initialize Forecaster
+    if 'forecaster' not in st.session_state:
+        st.session_state.forecaster = ForecasterAgent(grok_client=grok)
+    forecaster = st.session_state.forecaster
+    
+    st.markdown("---")
+    
+    # Input form
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Your Investment Plan")
+        current_age = st.number_input("Current Age", min_value=18, max_value=80, value=21, step=1)
+        current_value = st.number_input("Current Portfolio Value (€)", min_value=0, value=0, step=1000)
+        
+    with col2:
+        st.subheader("💰 Contribution Plan")
+        monthly_contribution = st.number_input("Monthly Investment (€)", min_value=0, value=300, step=50)
+        annual_bonus = st.number_input("Annual Bonus Investment (€)", min_value=0, value=1000, step=500)
+    
+    st.markdown("---")
+    
+    # Target ages
+    st.subheader("🎯 Target Milestones")
+    target_ages_input = st.text_input("Target Ages (comma-separated)", value="31, 41, 51")
+    try:
+        target_ages = [int(age.strip()) for age in target_ages_input.split(",")]
+        target_ages = [age for age in target_ages if age > current_age]  # Filter future ages
+    except:
+        st.error("Invalid target ages format. Use comma-separated numbers (e.g., 31, 41, 51)")
+        target_ages = [31, 41, 51]
+    
+    # Generate button
+    if st.button("🚀 Generate Forecasts", type="primary"):
+        with st.spinner("Generating personalized forecasts..."):
+            result = forecaster.execute({
+                "current_age": current_age,
+                "current_value": current_value,
+                "monthly_contribution": monthly_contribution,
+                "annual_bonus": annual_bonus,
+                "target_ages": target_ages
+            })
+            
+            if result["success"]:
+                st.session_state.forecast_result = result
+                st.success(f"✅ Forecasts generated for {len(result['forecasts'])} milestones!")
+                if not result["grok_available"]:
+                    st.warning("⚠️ Using fallback calculations (Grok API unavailable)")
+            else:
+                st.error(f"❌ Forecast generation failed: {result.get('error', 'Unknown error')}")
+    
+    # Display results
+    if 'forecast_result' in st.session_state and st.session_state.forecast_result.get("success"):
+        result = st.session_state.forecast_result
+        
+        st.markdown("---")
+        
+        # Summary
+        st.subheader("💡 Your Wealth Journey")
+        st.info(result["summary"])
+        
+        st.markdown("---")
+        
+        # Forecast table
+        st.subheader("📈 Scenario Breakdown")
+        
+        import pandas as pd
+        
+        table_data = []
+        for forecast in result["forecasts"]:
+            table_data.append({
+                "Age": forecast["target_age"],
+                "Years Ahead": forecast["years_ahead"],
+                "Base Case": f"€{forecast['base_case']:,.0f}",
+                "Bull Case": f"€{forecast['bull_case']:,.0f}",
+                "Super-Bull Case": f"€{forecast['super_bull_case']:,.0f}"
+            })
+        
+        df = pd.DataFrame(table_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
+        # Growth chart
+        st.subheader("📊 Growth Trajectory")
+        
+        # Prepare data for chart
+        ages = [current_age] + [f["target_age"] for f in result["forecasts"]]
+        base_values = [current_value] + [f["base_case"] for f in result["forecasts"]]
+        bull_values = [current_value] + [f["bull_case"] for f in result["forecasts"]]
+        super_bull_values = [current_value] + [f["super_bull_case"] for f in result["forecasts"]]
+        
+        # Create Plotly chart
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=ages,
+            y=base_values,
+            mode='lines+markers',
+            name='Base Case',
+            line=dict(color='#3498db', width=3),
+            marker=dict(size=10)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=ages,
+            y=bull_values,
+            mode='lines+markers',
+            name='Bull Case',
+            line=dict(color='#f39c12', width=3),
+            marker=dict(size=10)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=ages,
+            y=super_bull_values,
+            mode='lines+markers',
+            name='Super-Bull Case',
+            line=dict(color='#2ecc71', width=3),
+            marker=dict(size=10)
+        ))
+        
+        fig.update_layout(
+            title="Portfolio Value by Age",
+            xaxis_title="Age",
+            yaxis_title="Portfolio Value (€)",
+            hovermode='x unified',
+            height=500,
+            template="plotly_dark"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Detailed scenarios
+        st.subheader("📋 Detailed Scenarios")
+        
+        for forecast in result["forecasts"]:
+            with st.expander(f"Age {forecast['target_age']} ({forecast['years_ahead']} years ahead)"):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric(
+                        "Base Case",
+                        f"€{forecast['base_case']:,.0f}",
+                        delta=None
+                    )
+                    if forecast.get("base_rationale"):
+                        st.caption(forecast["base_rationale"])
+                
+                with col2:
+                    st.metric(
+                        "Bull Case",
+                        f"€{forecast['bull_case']:,.0f}",
+                        delta=None
+                    )
+                    if forecast.get("bull_rationale"):
+                        st.caption(forecast["bull_rationale"])
+                
+                with col3:
+                    st.metric(
+                        "Super-Bull Case",
+                        f"€{forecast['super_bull_case']:,.0f}",
+                        delta=None
+                    )
+                    if forecast.get("super_bull_rationale"):
+                        st.caption(forecast["super_bull_rationale"])
+                
+                if forecast.get("key_assumptions"):
+                    st.markdown("**Key Assumptions:**")
+                    for assumption in forecast["key_assumptions"]:
+                        st.markdown(f"- {assumption}")
+                
+                if forecast.get("is_grok"):
+                    st.caption("✨ Generated with Grok 4")
+                else:
+                    st.caption("🔢 Static calculation (Grok unavailable)")
+        
+        st.markdown("---")
+        
+        # Motivational footer
+        st.success("🚀 **Remember:** The future is exponential. Stay invested in breakthrough tech, compound relentlessly, and think in decades.")
+    
+    else:
+        st.info("👆 Enter your investment plan above and click 'Generate Forecasts' to see your personalized scenarios.")
 
 # ========== GROK TEST PAGE ==========
 elif page == "🧪 Grok Test":

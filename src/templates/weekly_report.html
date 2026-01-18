@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FutureOracle Weekly Report</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            border-radius: 12px;
+            padding: 30px;
+            border: 1px solid #333;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 36px;
+            color: #bb86fc;
+            margin: 0;
+        }
+        .header p {
+            font-size: 18px;
+            color: #b0b0b0;
+            margin-top: 5px;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .section h2 {
+            font-size: 24px;
+            color: #03dac6;
+            border-bottom: 2px solid #03dac6;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .signal-card {
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid #bb86fc;
+        }
+        .signal-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #e0e0e0;
+        }
+        .signal-card p {
+            margin: 0;
+            color: #b0b0b0;
+        }
+        .portfolio-summary {
+            display: flex;
+            justify-content: space-around;
+            text-align: center;
+            background-color: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .portfolio-metric {
+            flex: 1;
+        }
+        .portfolio-metric h4 {
+            margin: 0 0 5px 0;
+            font-size: 16px;
+            color: #b0b0b0;
+            text-transform: uppercase;
+        }
+        .portfolio-metric p {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+            color: #e0e0e0;
+        }
+        .portfolio-metric .positive {
+            color: #2ecc71;
+        }
+        .portfolio-metric .negative {
+            color: #e74c3c;
+        }
+        .chart-container {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .chart-container img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔮 FutureOracle</h1>
+            <p>Weekly Report - {{ report_date }}</p>
+        </div>
+
+        <!-- Top Signals Section -->
+        <div class="section">
+            <h2>⚡ Top Signals This Week</h2>
+            {% for signal in top_signals %}
+            <div class="signal-card">
+                <h3>[{{ signal.relevance_score }}/10] {{ signal.title }}</h3>
+                <p><strong>Source:</strong> {{ signal.source }} | <strong>Keywords:</strong> {{ signal.matched_keywords|join(', ') }}</p>
+            </div>
+            {% else %}
+            <p>No significant signals detected this week.</p>
+            {% endfor %}
+        </div>
+
+        <!-- Portfolio Snapshot Section -->
+        <div class="section">
+            <h2>💼 Portfolio Snapshot</h2>
+            <div class="portfolio-summary">
+                <div class="portfolio-metric">
+                    <h4>Total Value</h4>
+                    <p>{{ format_currency(portfolio_summary.total_value) }}</p>
+                </div>
+                <div class="portfolio-metric">
+                    <h4>24h Change</h4>
+                    <p class="{{ 'positive' if portfolio_summary.total_return_pct_24h >= 0 else 'negative' }}">{{ format_percent(portfolio_summary.total_return_pct_24h) }}</p>
+                </div>
+                <div class="portfolio-metric">
+                    <h4>Total Return</h4>
+                    <p class="{{ 'positive' if portfolio_summary.total_return_pct >= 0 else 'negative' }}">{{ format_percent(portfolio_summary.total_return_pct) }}</p>
+                </div>
+            </div>
+            <div class="chart-container">
+                <!-- Placeholder for portfolio chart -->
+                <!-- <img src="cid:portfolio_chart" alt="Portfolio Performance Chart"> -->
+            </div>
+        </div>
+
+        <!-- Forecast Update Section -->
+        <div class="section">
+            <h2>🚀 Forecast Update</h2>
+            <div class="portfolio-summary">
+                <div class="portfolio-metric">
+                    <h4>Age 31 (Super-Bull)</h4>
+                    <p>{{ format_currency(forecast_summary.age_31_super_bull) }}</p>
+                </div>
+                <div class="portfolio-metric">
+                    <h4>Age 41 (Super-Bull)</h4>
+                    <p>{{ format_currency(forecast_summary.age_41_super_bull) }}</p>
+                </div>
+                <div class="portfolio-metric">
+                    <h4>Age 51 (Super-Bull)</h4>
+                    <p>{{ format_currency(forecast_summary.age_51_super_bull) }}</p>
+                </div>
+            </div>
+            <div class="chart-container">
+                <!-- Placeholder for forecast chart -->
+                <!-- <img src="cid:forecast_chart" alt="Forecast Growth Chart"> -->
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Generated by FutureOracle | Stay invested in the future.</p>
+        </div>
+    </div>
+</body>
+</html>
+</html>
