@@ -1,0 +1,189 @@
+# =============================================================================
+# FutureOracle Watchlist Configuration
+# =============================================================================
+# Define stocks to track, categorized by investment thesis
+
+public_stocks:
+  # AI Compute Infrastructure
+  - ticker: NVDA
+    name: NVIDIA Corporation
+    category: ai_infrastructure
+    thesis: "Monopoly on AI training/inference chips. Blackwell architecture. Data center dominance."
+    weight: high
+    keywords:
+      - "NVIDIA"
+      - "Blackwell"
+      - "H100"
+      - "AI chips"
+      - "GPU"
+    
+  # Humanoid Robotics & Autonomy
+  - ticker: TSLA
+    name: Tesla Inc
+    category: robotics_autonomy
+    thesis: "Optimus humanoid robot, FSD autonomy, energy storage, AI compute (Dojo)."
+    weight: high
+    keywords:
+      - "Tesla"
+      - "Optimus"
+      - "FSD"
+      - "robotaxi"
+      - "Dojo"
+  
+  # Semiconductor Equipment
+  - ticker: ASML
+    name: ASML Holding
+    category: semiconductor_equipment
+    thesis: "Monopoly on EUV lithography. Enables all advanced chip manufacturing."
+    weight: high
+    keywords:
+      - "ASML"
+      - "EUV"
+      - "lithography"
+      - "High-NA"
+  
+  # AGI Research
+  - ticker: GOOGL
+    name: Alphabet Inc
+    category: agi_research
+    thesis: "DeepMind AGI research, Gemini models, quantum computing, Waymo autonomy."
+    weight: medium
+    keywords:
+      - "Google"
+      - "DeepMind"
+      - "Gemini"
+      - "AlphaFold"
+      - "Waymo"
+  
+  # Robotic Surgery
+  - ticker: ISRG
+    name: Intuitive Surgical
+    category: medical_robotics
+    thesis: "Da Vinci surgical robot monopoly. Razor-blade model (instruments). Expanding procedures."
+    weight: medium
+    keywords:
+      - "Intuitive Surgical"
+      - "Da Vinci"
+      - "robotic surgery"
+  
+  # AI Platforms
+  - ticker: PLTR
+    name: Palantir Technologies
+    category: ai_platforms
+    thesis: "AIP (AI Platform) for enterprise. Government contracts. Ontology moat."
+    weight: medium
+    keywords:
+      - "Palantir"
+      - "AIP"
+      - "Foundry"
+      - "Gotham"
+  
+  # Warehouse Automation
+  - ticker: SYM
+    name: Symbotic Inc
+    category: warehouse_automation
+    thesis: "AI-powered warehouse robotics. Walmart partnership. Supply chain transformation."
+    weight: low
+    keywords:
+      - "Symbotic"
+      - "warehouse automation"
+      - "Walmart"
+
+# Private/Pre-IPO Companies (News Tracking Only)
+private_companies:
+  - name: Figure AI
+    category: humanoid_robotics
+    thesis: "Humanoid robot for manufacturing/logistics. BMW partnership. OpenAI collaboration."
+    ipo_watch: true
+    keywords:
+      - "Figure AI"
+      - "Figure robot"
+      - "Brett Adcock"
+    
+  - name: Anthropic
+    category: agi_research
+    thesis: "Claude AI development. Constitutional AI safety approach. Google/Amazon backed."
+    ipo_watch: true
+    keywords:
+      - "Anthropic"
+      - "Claude"
+      - "Dario Amodei"
+    
+  - name: xAI
+    category: agi_research
+    thesis: "Grok AI by Elon Musk. Colossus supercomputer. X platform integration."
+    ipo_watch: true
+    keywords:
+      - "xAI"
+      - "Grok"
+      - "Colossus"
+      - "Elon Musk AI"
+    
+  - name: OpenAI
+    category: agi_research
+    thesis: "GPT models, ChatGPT. Leading AGI research. Microsoft partnership."
+    ipo_watch: true
+    keywords:
+      - "OpenAI"
+      - "GPT"
+      - "ChatGPT"
+      - "Sam Altman"
+    
+  - name: Altos Labs
+    category: longevity_biotech
+    thesis: "Cellular rejuvenation. Yamanaka factors. Billionaire-backed longevity moonshot."
+    ipo_watch: true
+    keywords:
+      - "Altos Labs"
+      - "cellular rejuvenation"
+      - "Yamanaka factors"
+      - "longevity"
+
+# Breakthrough Signal Keywords (Cross-Category)
+breakthrough_keywords:
+  humanoid_robots:
+    - "humanoid robot"
+    - "bipedal robot"
+    - "general purpose robot"
+    - "embodied AI"
+  
+  longevity:
+    - "cellular rejuvenation"
+    - "aging reversal"
+    - "senescent cells"
+    - "longevity escape velocity"
+    - "life extension"
+  
+  agi_asi:
+    - "artificial general intelligence"
+    - "AGI"
+    - "ASI"
+    - "superintelligence"
+    - "recursive self-improvement"
+  
+  quantum:
+    - "quantum computing breakthrough"
+    - "quantum supremacy"
+    - "quantum error correction"
+  
+  fusion:
+    - "fusion energy breakthrough"
+    - "net energy gain"
+    - "ITER"
+    - "tokamak"
+
+# Alert Thresholds
+alert_rules:
+  price_movement:
+    daily_change_pct: 5.0  # Alert if stock moves >5% in a day
+    weekly_change_pct: 10.0
+  
+  news_impact:
+    min_score: 7  # Alert if Grok scores news impact >= 7/10
+  
+  ipo_signals:
+    keywords:
+      - "IPO filing"
+      - "going public"
+      - "S-1 filing"
+      - "direct listing"

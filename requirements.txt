@@ -1,0 +1,52 @@
+# Core Framework
+streamlit==1.31.0
+crewai==0.28.0
+langchain==0.1.10
+langchain-openai==0.0.8
+
+# AI/LLM
+openai==1.12.0  # For xAI Grok API (OpenAI-compatible)
+
+# Data & Market
+yfinance==0.2.36
+pandas==2.2.0
+numpy==1.26.4
+
+# News & Web Scraping
+newsapi-python==0.2.7
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+requests==2.31.0
+
+# Database
+sqlalchemy==2.0.27
+sqlite-utils==3.36
+
+# Visualization
+plotly==5.19.0
+matplotlib==3.8.3
+
+# Notifications
+discord-webhook==1.3.1
+jinja2==3.1.3
+
+# Utilities
+python-dotenv==1.0.1
+pyyaml==6.0.1
+python-dateutil==2.9.0
+pytz==2024.1
+
+# Async/Performance
+aiohttp==3.9.3
+tenacity==8.2.3  # Retry logic
+
+# Development
+pytest==8.0.2
+pytest-asyncio==0.23.5
+black==24.2.0
+ruff==0.3.0
+ipykernel==6.29.2
+jupyter==1.0.0
+
+# Deployment
+gunicorn==21.2.0

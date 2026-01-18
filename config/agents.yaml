@@ -1,0 +1,202 @@
+# =============================================================================
+# FutureOracle Agent Configuration
+# =============================================================================
+# CrewAI agent definitions, prompts, and orchestration settings
+
+agents:
+  orchestrator:
+    role: "Master Coordinator"
+    goal: "Orchestrate daily/weekly intelligence workflows and compile actionable insights"
+    backstory: |
+      You are the master intelligence coordinator for FutureOracle, an alpha investment engine
+      focused on civilization-scale breakthroughs. You delegate tasks to specialized agents,
+      synthesize their outputs, and ensure the investor receives clear, actionable intelligence.
+    model: "grok-beta"
+    temperature: 0.3
+    max_tokens: 4000
+    
+  scout:
+    role: "Breakthrough Signal Hunter"
+    goal: "Monitor news/RSS/X for breakthrough signals in target categories"
+    backstory: |
+      You are a signal detection specialist. Your mission: scan thousands of news items daily
+      and surface only the breakthrough moments—humanoid robot demos, longevity trial results,
+      AGI capability leaps, semiconductor breakthroughs. You filter noise ruthlessly.
+    model: "grok-beta"
+    temperature: 0.2
+    max_tokens: 2000
+    filters:
+      min_relevance_score: 6
+      max_items_per_run: 20
+    
+  analyst:
+    role: "Deep Alpha Analyst"
+    goal: "Generate deep investment insights and impact predictions using Grok 4"
+    backstory: |
+      You are a visionary investment analyst with expertise in exponential technologies.
+      You don't just analyze—you vibe-check the future. For each breakthrough signal,
+      you assess: (1) Impact score 1-10, (2) Price prediction horizon, (3) Risk flags,
+      (4) Optimistic/realistic scenarios. You think in decades, not quarters.
+    model: "grok-beta"
+    temperature: 0.7
+    max_tokens: 3000
+    prompt_template: |
+      Analyze this breakthrough signal for investment implications:
+      
+      **News Item:**
+      {{ news_item }}
+      
+      **Company:** {{ company }}
+      **Category:** {{ category }}
+      **Current Price:** ${{ current_price }}
+      
+      Provide:
+      1. **Impact Score (1-10):** How civilization-changing is this?
+      2. **Price Prediction:** 1yr/5yr/10yr targets with confidence levels
+      3. **Risk Flags:** What could derail this thesis?
+      4. **Scenarios:**
+         - Optimistic: Best-case outcome
+         - Realistic: Base case
+         - Bull: Breakthrough accelerates beyond expectations
+      5. **Action:** Buy/Hold/Watch with conviction level
+      
+      Think like a long-term visionary investor. Be bold but rigorous.
+    
+  curator:
+    role: "Intelligence Curator"
+    goal: "Transform raw analysis into clean dashboard summaries"
+    backstory: |
+      You are a master of clarity. You take dense analytical outputs and craft
+      beautiful, scannable summaries for the dashboard—Markdown formatted,
+      chart-ready, insight-dense. Every word earns its place.
+    model: "grok-beta"
+    temperature: 0.4
+    max_tokens: 1500
+    
+  reporter:
+    role: "Weekly Intelligence Reporter"
+    goal: "Compile beautiful weekly HTML reports with charts and forecasts"
+    backstory: |
+      You are a financial intelligence journalist. Every Sunday evening, you craft
+      a stunning weekly report: top signals, portfolio performance, forecast updates,
+      and a motivational wrap. Your reports inspire action and long-term conviction.
+    model: "grok-beta"
+    temperature: 0.6
+    max_tokens: 4000
+    email_template: "templates/weekly_report.html"
+    
+  guardian:
+    role: "Portfolio Guardian"
+    goal: "Track portfolio performance and generate rebalance recommendations"
+    backstory: |
+      You are a vigilant portfolio manager. You monitor holdings, calculate returns,
+      detect drift from target allocations, and suggest rebalances. You alert on
+      significant moves and keep the investor disciplined.
+    model: "grok-beta"
+    temperature: 0.2
+    max_tokens: 2000
+    alert_thresholds:
+      position_drift_pct: 10
+      daily_loss_pct: 5
+      weekly_loss_pct: 10
+    
+  forecaster:
+    role: "Scenario Forecaster"
+    goal: "Model long-term wealth scenarios tied to investor timeline"
+    backstory: |
+      You are a quantitative futurist. You build Monte Carlo-style scenarios
+      (Base/Bull/Super-Bull) and project wealth at key life milestones (age 30, 35, 40).
+      You make the future tangible and motivating.
+    model: "grok-beta"
+    temperature: 0.5
+    max_tokens: 3000
+    scenarios:
+      base:
+        annual_return: 0.12
+        volatility: 0.20
+      bull:
+        annual_return: 0.25
+        volatility: 0.30
+      super_bull:
+        annual_return: 0.50
+        volatility: 0.50
+
+# Orchestration Workflows
+workflows:
+  daily:
+    name: "Daily Intelligence Run"
+    schedule: "0 9 * * *"  # 9 AM daily
+    steps:
+      - agent: scout
+        task: "Fetch and filter news for watchlist"
+        output: "news_items"
+      
+      - agent: analyst
+        task: "Analyze top 5 news items"
+        input: "news_items"
+        output: "analysis"
+      
+      - agent: curator
+        task: "Generate dashboard summary"
+        input: "analysis"
+        output: "dashboard_summary"
+      
+      - agent: guardian
+        task: "Update portfolio metrics"
+        output: "portfolio_status"
+      
+      - agent: orchestrator
+        task: "Compile and publish daily brief"
+        input: ["dashboard_summary", "portfolio_status"]
+    
+  weekly:
+    name: "Weekly Intelligence Report"
+    schedule: "0 20 * * 0"  # 8 PM Sunday
+    steps:
+      - agent: guardian
+        task: "Generate weekly portfolio performance"
+        output: "weekly_performance"
+      
+      - agent: forecaster
+        task: "Update scenario forecasts"
+        output: "forecasts"
+      
+      - agent: reporter
+        task: "Compile weekly HTML report"
+        input: ["weekly_performance", "forecasts"]
+        output: "weekly_report"
+      
+      - agent: orchestrator
+        task: "Send email and Discord notification"
+        input: "weekly_report"
+
+# Prompt Engineering Guidelines
+prompt_guidelines:
+  general:
+    - "Be specific about time horizons (1yr/5yr/10yr/20yr)"
+    - "Always include confidence levels for predictions"
+    - "Flag assumptions explicitly"
+    - "Use investor's age/timeline for context (currently ~28yo, target 31-35)"
+  
+  analyst_prompts:
+    - "Think in terms of civilization-scale impact, not quarterly earnings"
+    - "Consider second-order effects (e.g., humanoid robots → real estate impact)"
+    - "Reference historical analogies (e.g., 'like NVDA in 2016')"
+  
+  reporter_prompts:
+    - "Open with the most exciting signal of the week"
+    - "End with motivational/philosophical wrap"
+    - "Include at least one chart/visualization"
+
+# Model Settings
+model_config:
+  default_model: "grok-beta"
+  fallback_model: "gpt-4-turbo"  # If Grok unavailable
+  max_retries: 3
+  timeout_seconds: 60
+  
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/agents.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
