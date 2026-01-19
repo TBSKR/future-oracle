@@ -26,6 +26,14 @@ from data.db import Database
 from core.portfolio import PortfolioManager
 from core.grok_client import GrokClient
 
+# CrewAI integration
+try:
+    from agents.crew_setup import create_analysis_crew
+    CREWAI_AVAILABLE = True
+except ImportError:
+    CREWAI_AVAILABLE = False
+    create_analysis_crew = None
+
 # Page config
 st.set_page_config(
     page_title="FutureOracle",
@@ -429,17 +437,36 @@ elif page == "📈 Watchlist":
 
 # ========== DAILY BRIEF PAGE ==========
 elif page == "📰 Daily Brief":
-    st.header("Daily Breakthrough Signals + Grok Analysis")
+    st.header("Daily Breakthrough Signals + CrewAI Analysis")
 
-    if not scout or not analyst:
-        st.error("Scout/Analyst agents are unavailable (missing optional dependencies).")
-        st.info("Fix by installing requirements into the active venv, then restart the app.")
+    # Check if CrewAI is available
+    if CREWAI_AVAILABLE:
+        st.success("CrewAI multi-agent system active")
+        use_crewai = True
+    elif scout and analyst:
+        st.warning("CrewAI unavailable - using legacy Scout/Analyst pipeline")
+        use_crewai = False
+    else:
+        st.error("No analysis agents available (missing dependencies).")
+        st.info("Install requirements: pip install -r requirements.txt")
         st.stop()
+    
+    # Ticker selector for CrewAI analysis
+    tickers = [stock['ticker'] for stock in watchlist_config.get("public_stocks", [])]
     
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.markdown("**AI-curated news with deep Grok analysis**")
+        if use_crewai:
+            analysis_ticker = st.selectbox(
+                "Select Ticker to Analyze",
+                tickers,
+                index=tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in tickers else 0,
+                key="analysis_ticker_select"
+            )
+        else:
+            st.markdown("**AI-curated news with Grok analysis**")
+            analysis_ticker = None
     
     DAYS_OPTIONS = [1, 3, 7]
     MAX_OPTIONS = [3, 5, 10]
@@ -464,92 +491,165 @@ elif page == "📰 Daily Brief":
     
     # Fetch and analyze signals
     if st.button("🔍 Scan & Analyze", type="primary"):
-        # Check cache first
-        cached = get_cached_analysis("daily_brief", days_back, max_analyses)
+        if use_crewai and analysis_ticker:
+            # CrewAI path
+            cache_key = f"crew_{analysis_ticker}"
+            cached = get_cached_analysis(cache_key, days_back, max_analyses)
 
-        if cached:
-            st.info(f"Using cached analysis from {st.session_state.last_analysis_timestamp.strftime('%H:%M')}")
-            st.session_state.analyses = cached.get("analyses", [])
-            st.session_state.grok_available = cached.get("grok_available", False)
+            if cached:
+                st.info(f"Using cached CrewAI analysis from {st.session_state.last_analysis_timestamp.strftime('%H:%M')}")
+                st.session_state.crew_result = cached
+            else:
+                try:
+                    with st.spinner(f"Running CrewAI multi-agent analysis for {analysis_ticker}... (this may take 1-2 minutes)"):
+                        crew = create_analysis_crew(analysis_ticker)
+                        result = crew.kickoff()
+                        
+                        crew_result = {
+                            "raw_output": str(result),
+                            "ticker": analysis_ticker,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                        st.session_state.crew_result = crew_result
+                        
+                        # Cache the result
+                        cache_analysis(cache_key, crew_result, days_back, max_analyses)
+                        
+                    st.success(f"CrewAI analysis complete for {analysis_ticker}!")
+                    
+                except ValueError as e:
+                    if "API_KEY" in str(e):
+                        st.error(f"Missing API key: {str(e)}")
+                        st.info("Set OPENAI_API_KEY and FINNHUB_API_KEY in config/.env")
+                    else:
+                        st.error(f"Configuration error: {str(e)}")
+                    st.stop()
+                except Exception as e:
+                    error_msg = str(e)
+                    if "rate limit" in error_msg.lower():
+                        st.error("Finnhub API rate limit reached. Please wait a minute and try again.")
+                    elif "invalid symbol" in error_msg.lower() or "not found" in error_msg.lower():
+                        st.error(f"Invalid ticker symbol: {analysis_ticker}")
+                    else:
+                        st.error(f"CrewAI analysis failed: {error_msg}")
+                    st.stop()
         else:
-            try:
-                # Phase 1: Scout
-                with st.spinner("🔍 Phase 1/2: Scanning news sources..."):
-                    scout_result = scout.execute({
-                        "days_back": days_back,
-                        "max_results": 20,
-                        "min_relevance": 6
-                    })
+            # Legacy Scout/Analyst path
+            cached = get_cached_analysis("daily_brief", days_back, max_analyses)
 
-                    if not scout_result.get("success"):
-                        st.error("Scout Agent failed")
-                        st.stop()
+            if cached:
+                st.info(f"Using cached analysis from {st.session_state.last_analysis_timestamp.strftime('%H:%M')}")
+                st.session_state.analyses = cached.get("analyses", [])
+                st.session_state.grok_available = cached.get("grok_available", False)
+            else:
+                try:
+                    with st.spinner("🔍 Phase 1/2: Scanning news sources..."):
+                        scout_result = scout.execute({
+                            "days_back": days_back,
+                            "max_results": 20,
+                            "min_relevance": 6
+                        })
 
-                    articles = scout_result.get("articles", [])
+                        if not scout_result.get("success"):
+                            st.error("Scout Agent failed")
+                            st.stop()
 
-                    if not articles:
-                        st.warning("No breakthrough signals found in the selected timeframe")
-                        st.stop()
+                        articles = scout_result.get("articles", [])
 
-                st.success(f"✅ Scout: Found {len(articles)} signals")
+                        if not articles:
+                            st.warning("No breakthrough signals found in the selected timeframe")
+                            st.stop()
 
-                # Phase 2: Analyst
-                with st.spinner("🧠 Phase 2/2: Running Grok analysis (30-60 seconds)..."):
-                    analyst_result = analyst.execute({
-                        "articles": articles,
-                        "max_analyses": max_analyses
-                    })
+                    st.success(f"Scout: Found {len(articles)} signals")
 
-                    if not analyst_result.get("success"):
-                        st.error("Analyst Agent failed")
-                        st.stop()
+                    with st.spinner("🧠 Phase 2/2: Running Grok analysis..."):
+                        analyst_result = analyst.execute({
+                            "articles": articles,
+                            "max_analyses": max_analyses
+                        })
 
-                    analyses = analyst_result.get("analyses", [])
+                        if not analyst_result.get("success"):
+                            st.error("Analyst Agent failed")
+                            st.stop()
 
-                    # Sort by impact score
-                    analyses.sort(key=lambda x: x.get("impact_score", 0), reverse=True)
+                        analyses = analyst_result.get("analyses", [])
+                        analyses.sort(key=lambda x: x.get("impact_score", 0), reverse=True)
 
-                    st.session_state.analyses = analyses
-                    st.session_state.grok_available = analyst_result.get("grok_available", False)
+                        st.session_state.analyses = analyses
+                        st.session_state.grok_available = analyst_result.get("grok_available", False)
 
-                    st.success(f"✅ Analyst: Completed {len(analyses)} deep analyses")
+                        cache_analysis("daily_brief", {
+                            "analyses": analyses,
+                            "grok_available": analyst_result.get("grok_available", False)
+                        }, days_back, max_analyses)
 
-                    # Cache the result
-                    cache_analysis("daily_brief", {
-                        "analyses": analyses,
-                        "grok_available": analyst_result.get("grok_available", False)
-                    }, days_back, max_analyses)
-
-                    # Cache to database
-                    for article in articles:
-                        try:
-                            db.cache_scout_signal(article)
-                        except:
-                            pass
-
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-                st.info("Make sure NEWSAPI_KEY and XAI_API_KEY are set in config/.env")
-                st.stop()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+                    st.info("Make sure NEWSAPI_KEY and XAI_API_KEY are set in config/.env")
+                    st.stop()
     
-    # Display analyses
-    if "analyses" in st.session_state:
+    # Display CrewAI results
+    if "crew_result" in st.session_state and st.session_state.crew_result:
+        crew_result = st.session_state.crew_result
+        ticker = crew_result.get("ticker", "Unknown")
+        raw_output = crew_result.get("raw_output", "")
+        
+        st.markdown("---")
+        st.subheader(f"CrewAI Analysis: {ticker}")
+        
+        # Display structured output in expandable sections
+        with st.expander("📰 Scout Report - Market Intelligence", expanded=True):
+            # Try to extract scout section from output
+            if "scout" in raw_output.lower() or "news" in raw_output.lower():
+                scout_end = raw_output.lower().find("analyst")
+                if scout_end > 0:
+                    st.markdown(raw_output[:scout_end])
+                else:
+                    st.markdown(raw_output[:len(raw_output)//3])
+            else:
+                st.markdown(raw_output[:1000] if len(raw_output) > 1000 else raw_output)
+        
+        with st.expander("📊 Analyst Assessment - Impact & Risks", expanded=True):
+            # Try to extract analyst section
+            analyst_start = raw_output.lower().find("analyst")
+            analyst_end = raw_output.lower().find("forecast")
+            if analyst_start > 0 and analyst_end > analyst_start:
+                st.markdown(raw_output[analyst_start:analyst_end])
+            elif analyst_start > 0:
+                st.markdown(raw_output[analyst_start:analyst_start+1500])
+            else:
+                mid = len(raw_output)//3
+                st.markdown(raw_output[mid:mid*2])
+        
+        with st.expander("🔮 Forecaster Scenarios - Long-Term Outlook", expanded=False):
+            # Try to extract forecaster section
+            forecast_start = raw_output.lower().find("forecast")
+            if forecast_start > 0:
+                st.markdown(raw_output[forecast_start:])
+            else:
+                st.markdown(raw_output[len(raw_output)*2//3:])
+        
+        # Full raw output option
+        with st.expander("📄 Full Analysis Output", expanded=False):
+            st.text(raw_output)
+    
+    # Display legacy analyses (if not using CrewAI)
+    elif "analyses" in st.session_state and st.session_state.analyses:
         analyses = st.session_state.analyses
         grok_available = st.session_state.get("grok_available", False)
         
         if not grok_available:
-            st.warning("⚠️ Grok API unavailable - showing fallback analyses")
+            st.warning("Grok API unavailable - showing fallback analyses")
         
         st.markdown("---")
         
-        # High-impact signals first
         high_impact = [a for a in analyses if a.get("impact_score", 0) >= 8]
         if high_impact:
             st.subheader(f"🚨 High-Impact Signals ({len(high_impact)})")
             for analysis in high_impact:
                 _display_analysis_card(analysis, is_high_impact=True)
         
-        # Regular signals
         regular = [a for a in analyses if a.get("impact_score", 0) < 8]
         if regular:
             st.subheader(f"📰 Breakthrough Signals ({len(regular)})")
