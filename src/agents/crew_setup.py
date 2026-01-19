@@ -14,10 +14,12 @@ from crewai import Agent, Task, Crew, Process
 from crewai.tools import tool
 
 from data.finnhub_client import FinnhubClient
+from data.reddit_client import RedditClient
 
 
 # Lazy-loaded Finnhub client
 _finnhub_client: Optional[FinnhubClient] = None
+_reddit_client: Optional[RedditClient] = None
 
 
 def _get_finnhub_client() -> FinnhubClient:
@@ -26,6 +28,14 @@ def _get_finnhub_client() -> FinnhubClient:
     if _finnhub_client is None:
         _finnhub_client = FinnhubClient()
     return _finnhub_client
+
+
+def _get_reddit_client() -> RedditClient:
+    """Get or create RedditClient instance."""
+    global _reddit_client
+    if _reddit_client is None:
+        _reddit_client = RedditClient()
+    return _reddit_client
 
 
 # =============================================================================
@@ -96,6 +106,22 @@ def finnhub_sentiment_tool(ticker: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+@tool("Reddit Sentiment Tool")
+def reddit_sentiment_tool(ticker: str) -> str:
+    """Get Reddit sentiment for a stock ticker from r/wallstreetbets."""
+    # TODO: Validate tool output in an end-to-end run once Reddit creds are set.
+    try:
+        reddit = _get_reddit_client()
+        mentions = reddit.get_ticker_mentions(ticker)
+        sentiment_score = reddit.calculate_sentiment_score(mentions)
+        return (
+            f"Reddit mentions: {len(mentions)}, "
+            f"Sentiment score: {sentiment_score:.2f}/100"
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 # =============================================================================
 # AGENT CREATORS
 # =============================================================================
@@ -104,14 +130,14 @@ def create_scout_agent() -> Agent:
     """Create the Market Intelligence Scout agent."""
     return Agent(
         role="Market Intelligence Scout",
-        goal="Gather breakthrough news, sentiment signals, and market data for the target ticker.",
+        goal="Gather breakthrough news, sentiment signals, and social media buzz for the target ticker.",
         backstory="""You are an expert signal detection specialist focused on exponential 
 technologies: AI, humanoid robotics, longevity biotech, and semiconductors. Your mission 
 is to scan news sources and surface only breakthrough moments—major product launches, 
 clinical trial results, regulatory approvals, partnership announcements, and technology 
 leaps. You filter noise ruthlessly and prioritize high-impact signals that could move 
 markets or indicate long-term paradigm shifts.""",
-        tools=[finnhub_news_tool, finnhub_sentiment_tool],
+        tools=[finnhub_news_tool, finnhub_sentiment_tool, reddit_sentiment_tool],
         verbose=True,
         allow_delegation=False
     )
@@ -160,14 +186,16 @@ def create_scout_task(agent: Agent, ticker: str) -> Task:
 
 1. Use the finnhub_news_tool to fetch recent news articles for {ticker}
 2. Use the finnhub_sentiment_tool to get current sentiment and buzz data for {ticker}
-3. Identify breakthrough signals: major announcements, technology leaps, regulatory changes
-4. Filter out noise and focus on high-impact news items
-5. Summarize the current market narrative and key themes
+3. Use the reddit_sentiment_tool to capture retail investor sentiment for {ticker}
+4. Identify breakthrough signals: major announcements, technology leaps, regulatory changes
+5. Filter out noise and focus on high-impact news items
+6. Summarize the current market narrative and key themes
 
 Focus on signals that could indicate paradigm shifts or significant price movements.""",
         expected_output="""A structured report containing:
 - List of top 5 most impactful news items with brief summaries
 - Current sentiment score and buzz metrics
+- Reddit mentions and sentiment score
 - Key themes and narratives in the market
 - Any breakthrough signals identified
 - Overall market mood (bullish/neutral/bearish) with reasoning
