@@ -110,6 +110,8 @@ def finnhub_sentiment_tool(ticker: str) -> str:
 def reddit_sentiment_tool(ticker: str) -> str:
     """Get Reddit sentiment for a stock ticker from r/wallstreetbets."""
     # TODO: Validate tool output in an end-to-end run once Reddit creds are set.
+    if os.getenv("REDDIT_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        return "Reddit sentiment disabled via REDDIT_ENABLED"
     try:
         reddit = _get_reddit_client()
         mentions = reddit.get_ticker_mentions(ticker)
