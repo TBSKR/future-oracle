@@ -9,6 +9,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import json
 import re
+from pathlib import Path
+import yaml
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .base import BaseAgent
@@ -44,6 +46,18 @@ class AnalystAgent(BaseAgent):
             self.grok = None
             self.grok_available = False
             self.logger.warning(f"Grok client unavailable: {e}")
+
+        # Load watchlist keywords for ticker inference
+        self._keyword_to_ticker = self._load_watchlist_keyword_map()
+
+        # Initialize vector memory (optional)
+        self.memory = None
+        try:
+            from memory.vector_store import VectorMemory  # type: ignore
+            self.memory = VectorMemory()
+            self.logger.info("Vector memory initialized successfully")
+        except Exception as e:
+            self.logger.warning(f"Vector memory unavailable: {e}")
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -60,6 +74,8 @@ class AnalystAgent(BaseAgent):
         try:
             articles = context.get("articles", [])
             max_analyses = context.get("max_analyses", 5)
+            use_memory = context.get("use_memory", True)
+            store_memory = context.get("store_memory", True)
             
             if not articles:
                 self.logger.warning("No articles provided for analysis")
@@ -84,7 +100,11 @@ class AnalystAgent(BaseAgent):
             analyses = []
             for article in articles_to_analyze:
                 try:
-                    analysis = self._analyze_article(article)
+                    analysis = self._analyze_article(
+                        article,
+                        use_memory=use_memory,
+                        store_memory=store_memory,
+                    )
                     analyses.append(analysis)
                 except Exception as e:
                     self.logger.error(f"Failed to analyze article '{article.get('title', 'Unknown')}': {e}")
@@ -111,7 +131,12 @@ class AnalystAgent(BaseAgent):
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type(Exception)
     )
-    def _analyze_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_article(
+        self,
+        article: Dict[str, Any],
+        use_memory: bool = True,
+        store_memory: bool = True
+    ) -> Dict[str, Any]:
         """
         Analyze a single article using Grok.
         
@@ -126,7 +151,22 @@ class AnalystAgent(BaseAgent):
         
         # Build analysis prompt
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(article)
+        similar_context = None
+        ticker = self._infer_ticker(article)
+
+        if use_memory and self.memory:
+            try:
+                query_text = f"{article.get('title', '')}\n{article.get('description', '')}"
+                matches = self.memory.retrieve_similar_analyses(
+                    query_text=query_text,
+                    top_k=3,
+                    ticker=ticker
+                )
+                similar_context = self._format_similar_analyses(matches)
+            except Exception as e:
+                self.logger.warning(f"Memory retrieval failed: {e}")
+
+        user_prompt = self._build_user_prompt(article, similar_context)
         
         # Call Grok API
         try:
@@ -140,6 +180,12 @@ class AnalystAgent(BaseAgent):
             # Parse response into structured format
             parsed = self._parse_grok_response(response, article)
             
+            if store_memory and self.memory:
+                try:
+                    self._store_analysis_memory(parsed, article, ticker)
+                except Exception as e:
+                    self.logger.warning(f"Memory store failed: {e}")
+
             self.logger.info(f"Analyzed: {article.get('title', 'Unknown')} - Impact: {parsed['impact_score']}/10")
             
             return parsed
@@ -169,14 +215,18 @@ Always provide:
 5. Risk flags (2-3 bullet points)
 6. Long-term scenarios (brief)"""
     
-    def _build_user_prompt(self, article: Dict[str, Any]) -> str:
+    def _build_user_prompt(self, article: Dict[str, Any], similar_analyses: Optional[str] = None) -> str:
         """Build user prompt for specific article"""
         title = article.get("title", "Unknown")
         description = article.get("description", "No description")
         source = article.get("source", "Unknown")
         keywords = ", ".join(article.get("matched_keywords", [])[:5])
         categories = ", ".join(article.get("matched_categories", [])[:3])
-        
+
+        memory_context = ""
+        if similar_analyses:
+            memory_context = f"\n\nSimilar past analyses:\n{similar_analyses}\n"
+
         return f"""Analyze this breakthrough signal for investment implications:
 
 **Title:** {title}
@@ -184,6 +234,7 @@ Always provide:
 **Summary:** {description}
 **Matched Keywords:** {keywords}
 **Categories:** {categories}
+{memory_context}
 
 Provide your analysis in this format:
 
@@ -198,6 +249,129 @@ SCENARIOS:
 - 5yr: [brief upside]
 - 10yr: [brief upside]
 - 20yr: [brief upside]"""
+
+    def _load_watchlist_keyword_map(self) -> Dict[str, str]:
+        """Load watchlist keywords mapped to tickers for inference."""
+        config_path = Path(__file__).parent.parent.parent / "config" / "watchlist.yaml"
+        try:
+            with open(config_path, "r") as f:
+                watchlist_config = yaml.safe_load(f) or {}
+        except Exception as e:
+            self.logger.warning(f"Unable to load watchlist config: {e}")
+            return {}
+
+        keyword_map: Dict[str, str] = {}
+        for stock in watchlist_config.get("public_stocks", []):
+            ticker = stock.get("ticker")
+            if not ticker:
+                continue
+            keywords = stock.get("keywords", [])
+            name = stock.get("name")
+            for keyword in keywords + [ticker, name]:
+                if keyword:
+                    keyword_map[str(keyword).lower()] = ticker
+
+        return keyword_map
+
+    def _infer_ticker(self, article: Dict[str, Any]) -> Optional[str]:
+        """Infer ticker from article content or matched keywords."""
+        explicit = article.get("ticker")
+        if explicit:
+            return explicit
+
+        for keyword in article.get("matched_keywords", []):
+            ticker = self._keyword_to_ticker.get(str(keyword).lower())
+            if ticker:
+                return ticker
+
+        title = (article.get("title") or "").lower()
+        for keyword, ticker in self._keyword_to_ticker.items():
+            if keyword in title:
+                return ticker
+
+        return None
+
+    def _format_similar_analyses(self, matches: List[Dict[str, Any]]) -> str:
+        """Format similar analyses for prompt context."""
+        if not matches:
+            return ""
+
+        lines = []
+        for match in matches:
+            metadata = match.get("metadata", {}) or {}
+            timestamp = metadata.get("timestamp", "unknown")
+            ticker = metadata.get("ticker", "N/A")
+            impact = metadata.get("impact_score", "N/A")
+            sentiment = metadata.get("sentiment", "N/A")
+            summary = (
+                metadata.get("summary")
+                or metadata.get("key_insight")
+                or metadata.get("analysis_text", "")
+            )
+            summary = summary.replace("\n", " ").strip()
+            if len(summary) > 240:
+                summary = summary[:237].rstrip() + "..."
+            lines.append(
+                f"- {timestamp} | {ticker} | Impact {impact}/10 | Sentiment {sentiment} | {summary}"
+            )
+
+        return "\n".join(lines)
+
+    def _build_memory_text(self, analysis: Dict[str, Any], article: Dict[str, Any]) -> str:
+        """Build a canonical text block for embeddings."""
+        risks = analysis.get("risks", [])
+        scenarios = analysis.get("scenarios", {})
+        parts = [
+            f"Title: {analysis.get('article_title') or article.get('title', 'Unknown')}",
+            f"Source: {analysis.get('article_source') or article.get('source', 'Unknown')}",
+            f"Impact Score: {analysis.get('impact_score', 'N/A')}/10",
+            f"Sentiment: {analysis.get('sentiment', 'N/A')}",
+            f"30-Day Outlook: {analysis.get('price_target_30d', 'N/A')}",
+            f"Key Insight: {analysis.get('key_insight', 'N/A')}",
+            f"Risks: {', '.join(risks) if risks else 'N/A'}",
+            f"Scenarios: 5yr {scenarios.get('5yr', 'N/A')}; "
+            f"10yr {scenarios.get('10yr', 'N/A')}; "
+            f"20yr {scenarios.get('20yr', 'N/A')}",
+        ]
+
+        raw = analysis.get("raw_analysis")
+        if raw:
+            parts.append(f"Raw Analysis: {raw}")
+
+        return "\n".join(parts)
+
+    def _store_analysis_memory(
+        self,
+        analysis: Dict[str, Any],
+        article: Dict[str, Any],
+        ticker: Optional[str]
+    ) -> None:
+        """Store analysis in vector memory."""
+        if not self.memory:
+            return
+
+        analysis_text = self._build_memory_text(analysis, article)
+        metadata = {
+            "timestamp": analysis.get("analyzed_at"),
+            "ticker": ticker or "UNKNOWN",
+            "article_title": analysis.get("article_title"),
+            "article_url": analysis.get("article_url"),
+            "article_source": analysis.get("article_source"),
+            "relevance_score": analysis.get("relevance_score"),
+            "impact_score": analysis.get("impact_score"),
+            "sentiment": analysis.get("sentiment"),
+            "price_target_30d": analysis.get("price_target_30d"),
+            "key_insight": analysis.get("key_insight"),
+            "grok_model": analysis.get("grok_model"),
+            "is_fallback": analysis.get("is_fallback", False),
+            "analysis_type": "news_signal",
+        }
+
+        self.memory.store_analysis(
+            ticker=ticker or "UNKNOWN",
+            analysis_text=analysis_text,
+            metadata=metadata
+        )
     
     def _parse_grok_response(self, response: str, article: Dict[str, Any]) -> Dict[str, Any]:
         """

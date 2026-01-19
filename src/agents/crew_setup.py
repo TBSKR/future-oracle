@@ -207,8 +207,41 @@ Format as a clear, structured report with sections.""",
     )
 
 
-def create_analyst_task(agent: Agent, context: list) -> Task:
+def _build_memory_context(ticker: str) -> str:
+    """Fetch similar past analyses for the ticker."""
+    try:
+        from memory.vector_store import VectorMemory  # type: ignore
+        memory = VectorMemory()
+        matches = memory.retrieve_similar_analyses(
+            query_text=f"{ticker} investment analysis",
+            top_k=3,
+            ticker=ticker
+        )
+        if not matches:
+            return ""
+
+        lines = []
+        for match in matches:
+            metadata = match.get("metadata", {}) or {}
+            timestamp = metadata.get("timestamp", "unknown")
+            summary = (
+                metadata.get("summary")
+                or metadata.get("key_insight")
+                or metadata.get("analysis_text", "")
+            )
+            summary = summary.replace("\n", " ").strip()
+            if len(summary) > 220:
+                summary = summary[:217].rstrip() + "..."
+            lines.append(f"- {timestamp}: {summary}")
+
+        return "\n\nSimilar past analyses:\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def create_analyst_task(agent: Agent, context: list, ticker: str) -> Task:
     """Create the analysis task for evaluating market signals."""
+    memory_context = _build_memory_context(ticker)
     return Task(
         description="""Analyze the market intelligence gathered by the Scout and generate investment insights:
 
@@ -219,7 +252,7 @@ def create_analyst_task(agent: Agent, context: list) -> Task:
 5. Identify key risks that could invalidate the thesis
 6. Note any catalysts or upcoming events to watch
 
-Be rigorous but decisive. Provide clear ratings and predictions.""",
+Be rigorous but decisive. Provide clear ratings and predictions.""" + memory_context,
         expected_output="""A structured analysis containing:
 - Impact Score (1-10) with justification
 - Sentiment: bullish/neutral/bearish with confidence level
@@ -288,7 +321,7 @@ def create_analysis_crew(ticker: str) -> Crew:
     forecaster = create_forecaster_agent()
     
     scout_task = create_scout_task(scout, ticker)
-    analyst_task = create_analyst_task(analyst, context=[scout_task])
+    analyst_task = create_analyst_task(analyst, context=[scout_task], ticker=ticker)
     forecast_task = create_forecast_task(forecaster, context=[analyst_task])
     
     return Crew(
@@ -311,7 +344,25 @@ def run_analysis(ticker: str) -> str:
     """
     crew = create_analysis_crew(ticker)
     result = crew.kickoff()
-    return str(result)
+    output = str(result)
+
+    try:
+        from memory.vector_store import VectorMemory  # type: ignore
+        memory = VectorMemory()
+        memory.store_analysis(
+            ticker=ticker,
+            analysis_text=output,
+            metadata={
+                "timestamp": datetime.utcnow().isoformat(),
+                "ticker": ticker,
+                "analysis_type": "crewai",
+                "summary": output[:280]
+            }
+        )
+    except Exception:
+        pass
+
+    return output
 
 
 if __name__ == "__main__":

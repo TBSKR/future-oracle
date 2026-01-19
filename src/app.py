@@ -96,6 +96,12 @@ def init_components():
 
 market, db, portfolio, grok, scout, analyst = init_components()
 
+@st.cache_resource
+def get_vector_memory():
+    """Initialize Pinecone vector memory (cached)."""
+    from memory.vector_store import VectorMemory  # type: ignore
+    return VectorMemory()
+
 # Load configuration
 config_path = Path(__file__).parent.parent / "config" / "watchlist.yaml"
 with open(config_path, "r") as f:
@@ -110,7 +116,12 @@ def check_high_impact_alerts():
     try:
         scout_result = scout.execute({"days_back": 1, "max_results": 10, "min_relevance": 7})
         if scout_result.get("success") and scout_result.get("articles"):
-            analyst_result = analyst.execute({"articles": scout_result["articles"], "max_analyses": 5})
+            analyst_result = analyst.execute({
+                "articles": scout_result["articles"],
+                "max_analyses": 5,
+                "use_memory": False,
+                "store_memory": False
+            })
             if analyst_result.get("success"):
                 high_impact = analyst.get_high_impact_signals(analyst_result["analyses"], threshold=8)
                 return high_impact
@@ -175,7 +186,7 @@ with st.sidebar:
     st.header("Navigation")
     page = st.radio(
         "Select View",
-        ["📊 Overview", "📈 Watchlist", "📰 Daily Brief", "💼 Portfolio", "🔮 Forecasts", "🧪 Grok Test"]
+        ["📊 Overview", "📈 Watchlist", "📰 Daily Brief", "📚 Historical Analyses", "💼 Portfolio", "🔮 Forecasts", "🧪 Grok Test"]
     )
     
     st.markdown("---")
@@ -512,6 +523,21 @@ elif page == "📰 Daily Brief":
                         }
                         
                         st.session_state.crew_result = crew_result
+
+                        try:
+                            memory = get_vector_memory()
+                            memory.store_analysis(
+                                ticker=analysis_ticker,
+                                analysis_text=crew_result["raw_output"],
+                                metadata={
+                                    "timestamp": crew_result["timestamp"],
+                                    "ticker": analysis_ticker,
+                                    "analysis_type": "crewai",
+                                    "summary": crew_result["raw_output"][:280]
+                                }
+                            )
+                        except Exception as e:
+                            st.warning(f"Vector memory store skipped: {e}")
                         
                         # Cache the result
                         cache_analysis(cache_key, crew_result, days_back, max_analyses)
@@ -655,6 +681,81 @@ elif page == "📰 Daily Brief":
             st.subheader(f"📰 Breakthrough Signals ({len(regular)})")
             for analysis in regular:
                 _display_analysis_card(analysis, is_high_impact=False)
+
+# ========== HISTORICAL ANALYSES PAGE ==========
+elif page == "📚 Historical Analyses":
+    st.header("Historical Analyses")
+    st.markdown("Explore prior analyses stored in Pinecone for deeper context.")
+
+    try:
+        memory = get_vector_memory()
+    except Exception as e:
+        st.error("Vector memory not configured.")
+        st.info("Set PINECONE_API_KEY, PINECONE_ENV, and OPENAI_API_KEY in config/.env")
+        st.caption(str(e))
+        st.stop()
+
+    tickers = [stock['ticker'] for stock in watchlist_config.get("public_stocks", [])]
+    if not tickers:
+        st.info("No watchlist tickers configured.")
+        st.stop()
+
+    selected_ticker = st.selectbox(
+        "Select Ticker",
+        tickers,
+        index=tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in tickers else 0,
+        key="historical_ticker_select"
+    )
+
+    query_text = st.text_input(
+        "Search query",
+        value=f"{selected_ticker} analysis"
+    )
+    top_k = st.slider("Results to fetch", min_value=1, max_value=25, value=10)
+
+    if st.button("🔎 Load Historical Analyses"):
+        with st.spinner("Querying Pinecone..."):
+            matches = memory.retrieve_similar_analyses(
+                query_text=query_text,
+                top_k=top_k,
+                ticker=selected_ticker
+            )
+
+        if not matches:
+            st.info("No historical analyses found yet for this ticker.")
+        else:
+            def _parse_timestamp(value: str) -> datetime:
+                try:
+                    return datetime.fromisoformat(value)
+                except Exception:
+                    return datetime.min
+
+            matches = sorted(
+                matches,
+                key=lambda m: _parse_timestamp(m.get("metadata", {}).get("timestamp", "")),
+                reverse=True
+            )
+
+            for match in matches:
+                metadata = match.get("metadata", {}) or {}
+                timestamp = metadata.get("timestamp", "unknown")
+                impact = metadata.get("impact_score", "N/A")
+                sentiment = metadata.get("sentiment", "N/A")
+                summary = (
+                    metadata.get("summary")
+                    or metadata.get("key_insight")
+                    or metadata.get("analysis_text", "")
+                ).strip()
+                accuracy = metadata.get("prediction_accuracy", metadata.get("accuracy"))
+
+                st.markdown(f"**{timestamp} | Impact {impact}/10 | Sentiment {sentiment}**")
+                if summary:
+                    st.markdown(summary)
+                if accuracy is not None:
+                    st.markdown(f"**Prediction Accuracy:** {accuracy}")
+
+                with st.expander("Details"):
+                    st.markdown(metadata.get("analysis_text") or "No stored analysis text.")
 
 # ========== PORTFOLIO PAGE ==========
 elif page == "💼 Portfolio":
