@@ -152,9 +152,9 @@ class ScoutAgent(BaseAgent):
         Returns:
             Article with added relevance_score and matched_keywords
         """
-        title = article.get("title", "").lower()
-        description = article.get("description", "").lower()
-        content = article.get("content", "").lower()
+        title = (article.get("title") or "").lower()
+        description = (article.get("description") or "").lower()
+        content = (article.get("content") or "").lower()
         
         full_text = f"{title} {description} {content}"
         

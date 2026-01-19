@@ -80,8 +80,21 @@ class NewsAggregator:
             to_date = datetime.now()
             from_date = to_date - timedelta(days=days_back)
             
-            # Build query
-            query = " OR ".join(keywords)
+            # Build query with character limit (NewsAPI max: 500 chars)
+            query_parts = []
+            current_length = 0
+            max_length = 490  # Leave buffer for NewsAPI
+            
+            for keyword in keywords:
+                # Calculate length including " OR " separator
+                addition_length = len(keyword) + (4 if query_parts else 0)  # " OR " = 4 chars
+                if current_length + addition_length > max_length:
+                    break
+                query_parts.append(keyword)
+                current_length += addition_length
+            
+            query = " OR ".join(query_parts)
+            self.logger.info(f"NewsAPI query: {len(query_parts)} keywords, {len(query)} chars")
             
             # Fetch articles
             response = self.newsapi.get_everything(
