@@ -7,7 +7,7 @@ langchain-openai>=0.0.8,<0.2.0
 
 # AI/LLM
 openai==1.12.0  # For xAI Grok API (OpenAI-compatible) and embeddings
-pinecone-client==3.0.0  # Vector memory storage
+pinecone>=5.0.0  # Vector memory storage (renamed from pinecone-client)
 
 # Data & Market
 # yfinance removed - using Finnhub API
