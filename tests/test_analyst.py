@@ -330,6 +330,80 @@ SCENARIOS:
         
         high_impact = analyst.get_high_impact_signals(analyses, threshold=8)
         assert len(high_impact) == 0
+
+    # ========== Test Memory Helpers ==========
+
+    def test_build_user_prompt_includes_memory_context(self, analyst, sample_article):
+        """Test memory context inclusion in prompt"""
+        context = "- 2024-01-01 | NVDA | Impact 8/10 | Sentiment bullish | Prior insight"
+        prompt = analyst._build_user_prompt(sample_article, similar_analyses=context)
+        assert "Similar past analyses" in prompt
+        assert "Prior insight" in prompt
+
+    def test_infer_ticker_from_keywords(self, analyst, sample_article):
+        """Test ticker inference from matched keywords"""
+        analyst._keyword_to_ticker = {"nvidia": "NVDA"}
+        ticker = analyst._infer_ticker(sample_article)
+        assert ticker == "NVDA"
+
+    def test_store_analysis_memory_calls_vector_store(self, analyst):
+        """Test storing analysis into vector memory"""
+        analysis = {
+            "article_title": "Test Title",
+            "article_source": "Test Source",
+            "impact_score": 8,
+            "sentiment": "bullish",
+            "price_target_30d": "Up 10%",
+            "key_insight": "Strong signal",
+            "risks": ["Risk 1"],
+            "scenarios": {"5yr": "Growth", "10yr": "Expansion", "20yr": "Dominance"},
+            "raw_analysis": "Raw text",
+            "analyzed_at": "2024-01-01T00:00:00",
+            "grok_model": "grok-beta",
+        }
+        article = {"title": "Test Title", "source": "Test Source"}
+        analyst.memory = Mock()
+        analyst._store_analysis_memory(analysis, article, ticker="NVDA")
+
+        analyst.memory.store_analysis.assert_called_once()
+        _, kwargs = analyst.memory.store_analysis.call_args
+        assert kwargs["ticker"] == "NVDA"
+        assert "Key Insight: Strong signal" in kwargs["analysis_text"]
+        assert kwargs["metadata"]["impact_score"] == 8
+
+    def test_analyze_article_includes_memory_context(self, analyst, sample_article, mock_grok_client):
+        """Test memory retrieval is injected into analysis prompt"""
+        captured = {}
+
+        def _capture(system_prompt, user_prompt, temperature=0.7, max_tokens=800):
+            captured["prompt"] = user_prompt
+            return (
+                "IMPACT SCORE: 7\n"
+                "SENTIMENT: neutral\n"
+                "30-DAY OUTLOOK: N/A\n"
+                "KEY INSIGHT: ok\n"
+                "RISKS:\n- Risk 1\n"
+                "SCENARIOS:\n- 5yr: N/A\n- 10yr: N/A\n- 20yr: N/A\n"
+            )
+
+        mock_grok_client.analyze_with_prompt.side_effect = _capture
+        analyst._keyword_to_ticker = {"nvidia": "NVDA"}
+        analyst.memory = Mock()
+        analyst.memory.retrieve_similar_analyses.return_value = [
+            {
+                "metadata": {
+                    "timestamp": "2024-01-01",
+                    "ticker": "NVDA",
+                    "impact_score": 7,
+                    "sentiment": "neutral",
+                    "summary": "Prior analysis",
+                }
+            }
+        ]
+
+        analyst._analyze_article(sample_article, use_memory=True, store_memory=False)
+        assert "Similar past analyses" in captured["prompt"]
+        assert "Prior analysis" in captured["prompt"]
     
     # ========== Test Execute Method ==========
     
