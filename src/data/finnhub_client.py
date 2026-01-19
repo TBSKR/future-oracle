@@ -3,6 +3,7 @@
 import os
 import time
 import logging
+import threading
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from collections import deque
@@ -18,6 +19,69 @@ class FinnhubAPIError(Exception):
         super().__init__(self.message)
 
 
+class ThreadSafeRateLimiter:
+    """
+    Thread-safe rate limiter for API calls.
+    
+    Uses a sliding window approach with a lock to safely coordinate
+    rate limiting across multiple threads.
+    """
+    
+    def __init__(self, calls_per_minute: int = 60):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            calls_per_minute: Maximum API calls allowed per minute (default 60)
+        """
+        self._lock = threading.Lock()
+        self._call_times: deque = deque(maxlen=calls_per_minute)
+        self._rate_limit = calls_per_minute
+        self._rate_window = 60  # seconds
+        self._logger = logging.getLogger("futureoracle.rate_limiter")
+    
+    def acquire(self) -> None:
+        """
+        Block until a request slot is available.
+        
+        Thread-safe: uses a lock to coordinate access across threads.
+        """
+        with self._lock:
+            now = time.time()
+            
+            # Remove timestamps outside the window
+            while self._call_times and now - self._call_times[0] > self._rate_window:
+                self._call_times.popleft()
+            
+            # If at limit, calculate sleep time and wait
+            if len(self._call_times) >= self._rate_limit:
+                sleep_time = self._rate_window - (now - self._call_times[0]) + 0.1
+                if sleep_time > 0:
+                    self._logger.warning(f"Rate limit reached, sleeping {sleep_time:.2f}s")
+                    # Release lock while sleeping so other threads can check
+                    self._lock.release()
+                    try:
+                        time.sleep(sleep_time)
+                    finally:
+                        self._lock.acquire()
+                    # Re-check after sleep
+                    now = time.time()
+                    while self._call_times and now - self._call_times[0] > self._rate_window:
+                        self._call_times.popleft()
+            
+            # Record this call
+            self._call_times.append(time.time())
+    
+    @property
+    def calls_remaining(self) -> int:
+        """Get approximate number of calls remaining in current window."""
+        with self._lock:
+            now = time.time()
+            # Count calls within window
+            active_calls = sum(1 for t in self._call_times if now - t <= self._rate_window)
+            return max(0, self._rate_limit - active_calls)
+
+
 class FinnhubClient:
     """
     Client for Finnhub.io Market Data API.
@@ -26,7 +90,19 @@ class FinnhubClient:
 
     BASE_URL = "https://finnhub.io/api/v1"
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self, 
+        api_key: Optional[str] = None,
+        rate_limiter: Optional[ThreadSafeRateLimiter] = None
+    ):
+        """
+        Initialize Finnhub client.
+        
+        Args:
+            api_key: Finnhub API key (defaults to FINNHUB_API_KEY env var)
+            rate_limiter: Optional shared ThreadSafeRateLimiter for cross-thread coordination.
+                          If not provided, creates an instance-local limiter.
+        """
         self.api_key = api_key or os.getenv("FINNHUB_API_KEY")
         if not self.api_key:
             raise ValueError("FINNHUB_API_KEY not found")
@@ -34,22 +110,12 @@ class FinnhubClient:
         self.logger = logging.getLogger("futureoracle.finnhub")
         self._session = requests.Session()
 
-        # Rate limiting: 60 calls per minute
-        self._call_times: deque = deque(maxlen=60)
-        self._rate_limit = 60
-        self._rate_window = 60
+        # Use shared rate limiter if provided, otherwise create instance-local one
+        self._rate_limiter = rate_limiter or ThreadSafeRateLimiter(calls_per_minute=60)
 
     def _check_rate_limit(self):
-        """Enforce rate limiting"""
-        now = time.time()
-        while self._call_times and now - self._call_times[0] > self._rate_window:
-            self._call_times.popleft()
-        if len(self._call_times) >= self._rate_limit:
-            sleep_time = self._rate_window - (now - self._call_times[0])
-            if sleep_time > 0:
-                self.logger.warning(f"Rate limit reached, sleeping {sleep_time:.2f}s")
-                time.sleep(sleep_time)
-        self._call_times.append(time.time())
+        """Enforce rate limiting using the rate limiter."""
+        self._rate_limiter.acquire()
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:

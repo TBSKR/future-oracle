@@ -7,16 +7,22 @@ from datetime import datetime, timedelta
 import logging
 import os
 
-from data.finnhub_client import FinnhubClient, FinnhubAPIError
+from data.finnhub_client import FinnhubClient, FinnhubAPIError, ThreadSafeRateLimiter
 
 
 class MarketDataFetcher:
     """Fetches market data using Finnhub API with caching"""
+    
+    # Shared rate limiter across all instances (55 calls/min leaves headroom)
+    _shared_rate_limiter = ThreadSafeRateLimiter(calls_per_minute=55)
 
     def __init__(self, finnhub_client: Optional[FinnhubClient] = None):
         self.logger = logging.getLogger("futureoracle.market")
         try:
-            self.finnhub = finnhub_client or FinnhubClient()
+            # Pass shared rate limiter to FinnhubClient
+            self.finnhub = finnhub_client or FinnhubClient(
+                rate_limiter=MarketDataFetcher._shared_rate_limiter
+            )
             self._api_key = self.finnhub.api_key
             self._available = True
         except ValueError:
@@ -26,23 +32,35 @@ class MarketDataFetcher:
             self._available = False
 
     # ========== CACHED STATIC METHODS ==========
+    # Note: These create their own FinnhubClient but we apply rate limiting
+    # at the MarketDataFetcher level before calling these methods.
 
     @staticmethod
     @st.cache_data(ttl=3600)  # 1 hour cache
     def _cached_quote(ticker: str, api_key: str) -> Dict[str, Any]:
-        client = FinnhubClient(api_key=api_key)
+        # Rate limiting happens at caller level; use shared limiter
+        client = FinnhubClient(
+            api_key=api_key, 
+            rate_limiter=MarketDataFetcher._shared_rate_limiter
+        )
         return client.get_quote(ticker)
 
     @staticmethod
     @st.cache_data(ttl=3600)
     def _cached_profile(ticker: str, api_key: str) -> Dict[str, Any]:
-        client = FinnhubClient(api_key=api_key)
+        client = FinnhubClient(
+            api_key=api_key,
+            rate_limiter=MarketDataFetcher._shared_rate_limiter
+        )
         return client.get_company_profile(ticker)
 
     @staticmethod
     @st.cache_data(ttl=3600)
     def _cached_candles(ticker: str, resolution: str, from_ts: int, to_ts: int, api_key: str) -> Dict[str, Any]:
-        client = FinnhubClient(api_key=api_key)
+        client = FinnhubClient(
+            api_key=api_key,
+            rate_limiter=MarketDataFetcher._shared_rate_limiter
+        )
         return client.get_candles(ticker, resolution, from_ts, to_ts)
 
     # ========== PUBLIC METHODS ==========
@@ -110,13 +128,65 @@ class MarketDataFetcher:
             self.logger.error(f"Error fetching historical data for {ticker}: {e}")
             return pd.DataFrame()
 
-    def get_watchlist_snapshot(self, tickers: List[str]) -> List[Dict[str, Any]]:
-        """Get quotes for multiple tickers in parallel"""
-        from concurrent.futures import ThreadPoolExecutor
+    def _safe_get_quote(self, ticker: str) -> Dict[str, Any]:
+        """
+        Fetch quote with exception handling - never raises.
+        
+        Returns a dict with either valid quote data or error information.
+        """
+        try:
+            return self.get_quote(ticker)
+        except Exception as e:
+            self.logger.error(f"Quote fetch failed for {ticker}: {e}")
+            return {
+                "ticker": ticker, 
+                "error": str(e), 
+                "price": None,
+                "change": None,
+                "change_percent": None
+            }
 
-        with ThreadPoolExecutor(max_workers=min(len(tickers), 7)) as executor:
-            results = list(executor.map(self.get_quote, tickers))
-        return results
+    def get_watchlist_snapshot(self, tickers: List[str]) -> List[Dict[str, Any]]:
+        """
+        Get quotes for multiple tickers with graceful error handling.
+        
+        Uses submit + as_completed pattern to handle partial failures.
+        Returns results for all tickers, with error info for failed ones.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        if not tickers:
+            return []
+        
+        results: Dict[str, Dict[str, Any]] = {}
+        
+        # Reduced workers to avoid overwhelming API even with rate limiting
+        max_workers = min(len(tickers), 4)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_ticker = {
+                executor.submit(self._safe_get_quote, ticker): ticker 
+                for ticker in tickers
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    results[ticker] = future.result()
+                except Exception as e:
+                    # This shouldn't happen since _safe_get_quote catches all exceptions
+                    # but handle it anyway for robustness
+                    self.logger.warning(f"Unexpected error fetching {ticker}: {e}")
+                    results[ticker] = {
+                        "ticker": ticker, 
+                        "error": str(e),
+                        "price": None
+                    }
+        
+        # Return in original order
+        return [results.get(t, {"ticker": t, "error": "Unknown error"}) for t in tickers]
 
     def calculate_returns(self, ticker: str, start_date: Optional[datetime] = None,
                           end_date: Optional[datetime] = None) -> Dict[str, float]:
