@@ -91,6 +91,7 @@ def init_session_state():
         "user_profile": {"risk": None, "horizon": None},
         "user_plan": {},
         "onboarding_step": "ask_horizon",
+        "onboarding_prompted": False,
         "chat_session_id": str(uuid.uuid4()),
 
         # Background alert loading
@@ -328,12 +329,8 @@ def _handle_onboarding(user_input: str) -> bool:
                 "assistant",
                 "Got it. What’s your risk comfort: low, medium, or high?",
             )
-        else:
-            _append_chat_message(
-                "assistant",
-                "I didn’t catch that. Is your time horizon short, medium, or long?",
-            )
-        return True
+            return True
+        return False
 
     if step == "ask_risk":
         risk = _parse_onboarding_risk(user_input)
@@ -344,12 +341,8 @@ def _handle_onboarding(user_input: str) -> bool:
                 "assistant",
                 "Thanks. I’ll tailor guidance to your horizon and risk comfort.",
             )
-        else:
-            _append_chat_message(
-                "assistant",
-                "Please choose low, medium, or high risk comfort.",
-            )
-        return True
+            return True
+        return False
 
     return False
 
@@ -475,6 +468,8 @@ if page == "💬 Chat (Home)":
                     "Welcome to FutureOracle. Ask me anything about markets, signals, or your portfolio."
                 )
             _append_chat_message("assistant", greeting)
+            if st.session_state.onboarding_step:
+                st.session_state.onboarding_prompted = True
 
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
@@ -485,6 +480,8 @@ if page == "💬 Chat (Home)":
             _append_chat_message("user", user_input)
 
             handled = _handle_onboarding(user_input)
+            if handled:
+                st.session_state.onboarding_prompted = True
             if not handled:
                 response = chat_orchestrator.handle_message(
                     user_input,
@@ -499,6 +496,12 @@ if page == "💬 Chat (Home)":
                 st.session_state.user_profile = response["profile"]
                 st.session_state.user_plan = response["plan"]
                 _append_chat_message("assistant", response["response"])
+                if st.session_state.onboarding_step and not st.session_state.onboarding_prompted:
+                    _append_chat_message(
+                        "assistant",
+                        "If you want more tailored guidance, share your time horizon and risk comfort.",
+                    )
+                    st.session_state.onboarding_prompted = True
 
             st.rerun()
 
