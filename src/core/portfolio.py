@@ -158,6 +158,7 @@ class PortfolioManager:
                 "total_cost": 0,
                 "total_return": 0,
                 "total_return_pct": 0,
+                "position_count": 0,
                 "positions": [],
                 "timestamp": datetime.now().isoformat()
             }
