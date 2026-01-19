@@ -121,6 +121,47 @@ if high_impact_signals:
 
 st.markdown("---")
 
+# ========== HELPER FUNCTIONS (must be defined before sidebar callbacks) ==========
+
+ANALYSIS_CACHE_TTL_HOURS = 4
+
+def get_cached_analysis(cache_key: str, days_back: int, max_analyses: int):
+    """Retrieve cached analysis if valid and params match"""
+    cache = st.session_state.get("analysis_cache", {})
+    if cache_key not in cache:
+        return None
+
+    cached = cache[cache_key]
+    cached_params = cached.get("params", {})
+
+    # Check params match
+    if cached_params.get("days_back") != days_back or cached_params.get("max_analyses") != max_analyses:
+        return None
+
+    # Check TTL
+    cached_time = cached.get("timestamp")
+    if cached_time:
+        age_hours = (datetime.now() - cached_time).total_seconds() / 3600
+        if age_hours < ANALYSIS_CACHE_TTL_HOURS:
+            return cached.get("result")
+    return None
+
+def cache_analysis(cache_key: str, result: dict, days_back: int, max_analyses: int):
+    """Store analysis result in session state"""
+    st.session_state.analysis_cache[cache_key] = {
+        "result": result,
+        "timestamp": datetime.now(),
+        "params": {"days_back": days_back, "max_analyses": max_analyses}
+    }
+    st.session_state.last_analysis_timestamp = datetime.now()
+
+def clear_all_caches():
+    """Clear all session state caches"""
+    st.session_state.analysis_cache = {}
+    st.session_state.last_analysis_timestamp = None
+    st.session_state.analyses = []
+    st.cache_data.clear()
+
 # Sidebar
 with st.sidebar:
     st.header("Navigation")
@@ -165,47 +206,6 @@ with st.sidebar:
         st.caption(f"⏱️ Last analysis: {age_mins:.0f}m ago")
 
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-
-# ========== HELPER FUNCTIONS ==========
-
-ANALYSIS_CACHE_TTL_HOURS = 4
-
-def get_cached_analysis(cache_key: str, days_back: int, max_analyses: int):
-    """Retrieve cached analysis if valid and params match"""
-    cache = st.session_state.get("analysis_cache", {})
-    if cache_key not in cache:
-        return None
-
-    cached = cache[cache_key]
-    cached_params = cached.get("params", {})
-
-    # Check params match
-    if cached_params.get("days_back") != days_back or cached_params.get("max_analyses") != max_analyses:
-        return None
-
-    # Check TTL
-    cached_time = cached.get("timestamp")
-    if cached_time:
-        age_hours = (datetime.now() - cached_time).total_seconds() / 3600
-        if age_hours < ANALYSIS_CACHE_TTL_HOURS:
-            return cached.get("result")
-    return None
-
-def cache_analysis(cache_key: str, result: dict, days_back: int, max_analyses: int):
-    """Store analysis result in session state"""
-    st.session_state.analysis_cache[cache_key] = {
-        "result": result,
-        "timestamp": datetime.now(),
-        "params": {"days_back": days_back, "max_analyses": max_analyses}
-    }
-    st.session_state.last_analysis_timestamp = datetime.now()
-
-def clear_all_caches():
-    """Clear all session state caches"""
-    st.session_state.analysis_cache = {}
-    st.session_state.last_analysis_timestamp = None
-    st.session_state.analyses = []
-    st.cache_data.clear()
 
 def _display_analysis_card(analysis: dict, is_high_impact: bool = False):
     """Helper function to display analysis card"""
