@@ -34,6 +34,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ========== SESSION STATE INITIALIZATION ==========
+def init_session_state():
+    """Initialize session state with default values"""
+    defaults = {
+        # Watchlist and selections
+        "watchlist": ['NVDA', 'TSLA', 'ASML', 'GOOGL', 'ISRG', 'PLTR', 'SYM'],
+        "selected_ticker": 'NVDA',
+        "selected_period": "6mo",
+
+        # Analysis caching
+        "analysis_cache": {},  # {ticker: {result: dict, timestamp: datetime, params: dict}}
+        "last_analysis_timestamp": None,
+
+        # Daily Brief selections
+        "days_back": 1,
+        "max_analyses": 5,
+    }
+
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+init_session_state()
+
 # Initialize components
 @st.cache_resource
 def init_components():
@@ -107,23 +131,81 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("Watchlist")
-    
-    # Display watchlist
-    for stock in watchlist_config.get("public_stocks", []):
+
+    # Display watchlist with parallel fetching
+    tickers = [s['ticker'] for s in watchlist_config.get("public_stocks", [])]
+    with st.spinner("Loading prices..."):
+        quotes = market.get_watchlist_snapshot(tickers)
+
+    for stock, quote in zip(watchlist_config.get("public_stocks", []), quotes):
         ticker = stock['ticker']
-        try:
-            price = market.get_current_price(ticker)
-            if price:
-                st.markdown(f"**{ticker}** ${price:.2f}")
-            else:
-                st.markdown(f"**{ticker}** - {stock['name']}")
-        except:
+        price = quote.get("price") if isinstance(quote, dict) else None
+        if price:
+            change = quote.get("change_percent", 0)
+            color = "green" if change >= 0 else "red"
+            st.markdown(f"**{ticker}** ${price:.2f} :{color}[({change:+.1f}%)]")
+        else:
             st.markdown(f"**{ticker}** - {stock['name']}")
-    
+
     st.markdown("---")
+
+    # Cache controls
+    if st.button("🗑️ Clear Cache", help="Clear all cached data"):
+        clear_all_caches()
+        st.success("Cache cleared!")
+        st.rerun()
+
+    # Cache status
+    cache_count = len(st.session_state.get("analysis_cache", {}))
+    if cache_count > 0:
+        st.caption(f"📦 {cache_count} cached analyses")
+
+    if st.session_state.get("last_analysis_timestamp"):
+        age_mins = (datetime.now() - st.session_state.last_analysis_timestamp).total_seconds() / 60
+        st.caption(f"⏱️ Last analysis: {age_mins:.0f}m ago")
+
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
 # ========== HELPER FUNCTIONS ==========
+
+ANALYSIS_CACHE_TTL_HOURS = 4
+
+def get_cached_analysis(cache_key: str, days_back: int, max_analyses: int):
+    """Retrieve cached analysis if valid and params match"""
+    cache = st.session_state.get("analysis_cache", {})
+    if cache_key not in cache:
+        return None
+
+    cached = cache[cache_key]
+    cached_params = cached.get("params", {})
+
+    # Check params match
+    if cached_params.get("days_back") != days_back or cached_params.get("max_analyses") != max_analyses:
+        return None
+
+    # Check TTL
+    cached_time = cached.get("timestamp")
+    if cached_time:
+        age_hours = (datetime.now() - cached_time).total_seconds() / 3600
+        if age_hours < ANALYSIS_CACHE_TTL_HOURS:
+            return cached.get("result")
+    return None
+
+def cache_analysis(cache_key: str, result: dict, days_back: int, max_analyses: int):
+    """Store analysis result in session state"""
+    st.session_state.analysis_cache[cache_key] = {
+        "result": result,
+        "timestamp": datetime.now(),
+        "params": {"days_back": days_back, "max_analyses": max_analyses}
+    }
+    st.session_state.last_analysis_timestamp = datetime.now()
+
+def clear_all_caches():
+    """Clear all session state caches"""
+    st.session_state.analysis_cache = {}
+    st.session_state.last_analysis_timestamp = None
+    st.session_state.analyses = []
+    st.cache_data.clear()
 
 def _display_analysis_card(analysis: dict, is_high_impact: bool = False):
     """Helper function to display analysis card"""
@@ -265,7 +347,18 @@ elif page == "📈 Watchlist":
     
     # Ticker selector
     tickers = [stock['ticker'] for stock in watchlist_config.get("public_stocks", [])]
-    selected_ticker = st.selectbox("Select Stock", tickers)
+
+    # Ensure selected ticker is valid
+    if st.session_state.selected_ticker not in tickers:
+        st.session_state.selected_ticker = tickers[0] if tickers else None
+
+    selected_ticker = st.selectbox(
+        "Select Stock",
+        tickers,
+        index=tickers.index(st.session_state.selected_ticker) if st.session_state.selected_ticker in tickers else 0,
+        key="ticker_select"
+    )
+    st.session_state.selected_ticker = selected_ticker
     
     if selected_ticker:
         try:
@@ -288,7 +381,14 @@ elif page == "📈 Watchlist":
             # Historical chart
             st.subheader("Price History")
             
-            period = st.selectbox("Time Period", ["1mo", "3mo", "6mo", "1y", "2y"], index=2)
+            PERIOD_OPTIONS = ["1mo", "3mo", "6mo", "1y", "2y"]
+            period = st.selectbox(
+                "Time Period",
+                PERIOD_OPTIONS,
+                index=PERIOD_OPTIONS.index(st.session_state.selected_period),
+                key="period_select"
+            )
+            st.session_state.selected_period = period
             
             hist_data = market.get_historical_data(selected_ticker, period=period)
             
@@ -341,63 +441,92 @@ elif page == "📰 Daily Brief":
     with col1:
         st.markdown("**AI-curated news with deep Grok analysis**")
     
+    DAYS_OPTIONS = [1, 3, 7]
+    MAX_OPTIONS = [3, 5, 10]
+
     with col2:
-        days_back = st.selectbox("Days back", [1, 3, 7], index=0)
-    
+        days_back = st.selectbox(
+            "Days back",
+            DAYS_OPTIONS,
+            index=DAYS_OPTIONS.index(st.session_state.days_back),
+            key="days_back_select"
+        )
+        st.session_state.days_back = days_back
+
     with col3:
-        max_analyses = st.selectbox("Max analyses", [3, 5, 10], index=1)
+        max_analyses = st.selectbox(
+            "Max analyses",
+            MAX_OPTIONS,
+            index=MAX_OPTIONS.index(st.session_state.max_analyses),
+            key="max_analyses_select"
+        )
+        st.session_state.max_analyses = max_analyses
     
     # Fetch and analyze signals
-    if st.button("🔍 Scan & Analyze", type="primary") or "analyses" not in st.session_state:
-        with st.spinner("Scanning news sources..."):
+    if st.button("🔍 Scan & Analyze", type="primary"):
+        # Check cache first
+        cached = get_cached_analysis("daily_brief", days_back, max_analyses)
+
+        if cached:
+            st.info(f"Using cached analysis from {st.session_state.last_analysis_timestamp.strftime('%H:%M')}")
+            st.session_state.analyses = cached.get("analyses", [])
+            st.session_state.grok_available = cached.get("grok_available", False)
+        else:
             try:
-                # Step 1: Scout
-                scout_result = scout.execute({
-                    "days_back": days_back,
-                    "max_results": 20,
-                    "min_relevance": 6
-                })
-                
-                if not scout_result.get("success"):
-                    st.error("Scout Agent failed")
-                    st.stop()
-                
-                articles = scout_result.get("articles", [])
-                
-                if not articles:
-                    st.warning("No breakthrough signals found in the selected timeframe")
-                    st.stop()
-                
-                st.success(f"✅ Scout: Found {len(articles)} signals (from {scout_result['total_fetched']} articles)")
-                
-                # Step 2: Analyst
-                with st.spinner("Running Grok analysis..."):
+                # Phase 1: Scout
+                with st.spinner("🔍 Phase 1/2: Scanning news sources..."):
+                    scout_result = scout.execute({
+                        "days_back": days_back,
+                        "max_results": 20,
+                        "min_relevance": 6
+                    })
+
+                    if not scout_result.get("success"):
+                        st.error("Scout Agent failed")
+                        st.stop()
+
+                    articles = scout_result.get("articles", [])
+
+                    if not articles:
+                        st.warning("No breakthrough signals found in the selected timeframe")
+                        st.stop()
+
+                st.success(f"✅ Scout: Found {len(articles)} signals")
+
+                # Phase 2: Analyst
+                with st.spinner("🧠 Phase 2/2: Running Grok analysis (30-60 seconds)..."):
                     analyst_result = analyst.execute({
                         "articles": articles,
                         "max_analyses": max_analyses
                     })
-                    
+
                     if not analyst_result.get("success"):
                         st.error("Analyst Agent failed")
                         st.stop()
-                    
+
                     analyses = analyst_result.get("analyses", [])
-                    
+
                     # Sort by impact score
                     analyses.sort(key=lambda x: x.get("impact_score", 0), reverse=True)
-                    
+
                     st.session_state.analyses = analyses
                     st.session_state.grok_available = analyst_result.get("grok_available", False)
-                    
+
                     st.success(f"✅ Analyst: Completed {len(analyses)} deep analyses")
-                    
+
+                    # Cache the result
+                    cache_analysis("daily_brief", {
+                        "analyses": analyses,
+                        "grok_available": analyst_result.get("grok_available", False)
+                    }, days_back, max_analyses)
+
                     # Cache to database
                     for article in articles:
                         try:
                             db.cache_scout_signal(article)
                         except:
                             pass
-            
+
             except Exception as e:
                 st.error(f"Error: {str(e)}")
                 st.info("Make sure NEWSAPI_KEY and XAI_API_KEY are set in config/.env")

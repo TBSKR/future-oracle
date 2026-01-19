@@ -111,8 +111,12 @@ class MarketDataFetcher:
             return pd.DataFrame()
 
     def get_watchlist_snapshot(self, tickers: List[str]) -> List[Dict[str, Any]]:
-        """Get quotes for multiple tickers"""
-        return [self.get_quote(t) for t in tickers]
+        """Get quotes for multiple tickers in parallel"""
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(len(tickers), 7)) as executor:
+            results = list(executor.map(self.get_quote, tickers))
+        return results
 
     def calculate_returns(self, ticker: str, start_date: Optional[datetime] = None,
                           end_date: Optional[datetime] = None) -> Dict[str, float]:
