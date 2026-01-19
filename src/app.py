@@ -305,29 +305,29 @@ if page == "📊 Overview":
     # Portfolio metrics
     try:
         summary = portfolio.get_portfolio_summary()
-        
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric(
                 "Portfolio Value",
-                f"${summary['total_value']:,.2f}",
-                f"{summary['total_return_pct']:.2f}%"
+                f"${summary.get('total_value', 0):,.2f}",
+                f"{summary.get('total_return_pct', 0):.2f}%"
             )
         with col2:
             st.metric(
                 "Total Cost",
-                f"${summary['total_cost']:,.2f}"
+                f"${summary.get('total_cost', 0):,.2f}"
             )
         with col3:
             st.metric(
                 "Total Return",
-                f"${summary['total_return']:,.2f}",
-                f"{summary['total_return_pct']:.2f}%"
+                f"${summary.get('total_return', 0):,.2f}",
+                f"{summary.get('total_return_pct', 0):.2f}%"
             )
         with col4:
             st.metric(
                 "Positions",
-                summary['position_count']
+                summary.get('position_count', portfolio.position_count)
             )
     except Exception as e:
         st.error(f"Error loading portfolio: {e}")

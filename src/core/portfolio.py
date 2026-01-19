@@ -24,13 +24,33 @@ class PortfolioManager:
     def __init__(self, db: Optional[Database] = None):
         """
         Initialize portfolio manager.
-        
+
         Args:
             db: Database instance (creates new if None)
         """
         self.db = db or Database()
         self.market = MarketDataFetcher()
         self.logger = logging.getLogger("futureoracle.portfolio")
+
+    def get_all_positions(self) -> List[Dict[str, Any]]:
+        """
+        Get all portfolio positions.
+
+        Returns:
+            List of holdings, empty list if none or error
+        """
+        try:
+            holdings = self.db.get_all_holdings()
+            return holdings if holdings else []
+        except Exception as e:
+            self.logger.warning(f"Error fetching positions: {e}")
+            return []
+
+    @property
+    def position_count(self) -> int:
+        """Return the number of positions in the portfolio."""
+        positions = self.get_all_positions() or []
+        return len(positions)
     
     def add_position(
         self,
