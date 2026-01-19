@@ -27,6 +27,11 @@ config/.env
 logs/
 *.log
 
+# Documentation (generated)
+docs/TEST_REPORT.md
+docs/CONFIG_STATUS.md
+docs/CONFIGURATION_COMPLETE.md
+
 # Streamlit
 .streamlit/
 

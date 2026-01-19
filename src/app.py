@@ -21,6 +21,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / "config" / ".env")
 
+# Validate required API keys on startup
+required_keys = [
+    "FINNHUB_API_KEY",
+    "XAI_API_KEY", 
+    "OPENAI_API_KEY",
+    "PINECONE_API_KEY",
+    "PINECONE_INDEX_NAME",
+    "NEWSAPI_KEY"
+]
+missing_keys = [key for key in required_keys if not os.getenv(key)]
+
 from data.market import MarketDataFetcher
 from data.db import Database
 from core.portfolio import PortfolioManager
@@ -41,6 +52,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Display configuration errors if any
+if missing_keys:
+    st.error(
+        f"⚠️ **Missing Required API Keys:** {', '.join(missing_keys)}\n\n"
+        f"Please add these keys to `config/.env` and restart the application.\n\n"
+        f"See `config/.env.example` for the template."
+    )
+    st.stop()
 
 # ========== SESSION STATE INITIALIZATION ==========
 def init_session_state():
