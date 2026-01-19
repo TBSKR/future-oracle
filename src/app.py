@@ -13,6 +13,15 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import sys
 import os
+import logging
+
+# Suppress ScriptRunContext warnings from ThreadPoolExecutor threads
+# These are harmless warnings that occur when using threading with Streamlit
+class ScriptRunContextFilter(logging.Filter):
+    def filter(self, record):
+        return "missing ScriptRunContext" not in record.getMessage()
+
+logging.getLogger("streamlit").addFilter(ScriptRunContextFilter())
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
