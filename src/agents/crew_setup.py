@@ -8,13 +8,15 @@ Uses CrewAI framework for orchestration and collaboration.
 import os
 import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
 
 from data.finnhub_client import FinnhubClient
 from data.reddit_client import RedditClient
+from data.market import MarketDataFetcher
+from data.news import NewsAggregator
 
 
 # Lazy-loaded Finnhub client
@@ -132,6 +134,81 @@ def reddit_sentiment_tool(ticker: str) -> str:
             f"Reddit mentions: {len(mentions)}, "
             f"Sentiment score: {sentiment_score:.2f}/100"
         )
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def market_quote_tool(ticker: str) -> str:
+    """Fetch latest quote data for a ticker."""
+    try:
+        market = MarketDataFetcher()
+        return json.dumps(market.get_quote(ticker), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def market_history_tool(ticker: str, period: str = "6mo") -> str:
+    """Fetch historical price data summary for a ticker."""
+    try:
+        market = MarketDataFetcher()
+        data = market.get_historical_data(ticker, period=period)
+        if data.empty:
+            return json.dumps({"ticker": ticker, "error": "No historical data"})
+        return json.dumps({
+            "ticker": ticker,
+            "period": period,
+            "start": str(data.index.min()),
+            "end": str(data.index.max()),
+            "start_close": float(data["Close"].iloc[0]),
+            "end_close": float(data["Close"].iloc[-1]),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def summarize_sources_tool(ticker: str) -> str:
+    """Fetch and summarize recent headlines for a ticker."""
+    try:
+        news = NewsAggregator()
+        articles = news.fetch_news_for_keywords([ticker], days_back=7, max_results=5)
+        summary = [
+            {
+                "title": article.get("title"),
+                "source": article.get("source"),
+                "url": article.get("url"),
+            }
+            for article in articles
+        ]
+        return json.dumps(summary, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def explain_signal_tool(signal_text: str) -> str:
+    """Provide a short, plain-language explanation of a signal."""
+    if not signal_text:
+        return "No signal provided."
+    return (
+        "Signal explanation (plain language): "
+        f"{signal_text.strip()[:360]}"
+    )
+
+
+@tool
+def compare_two_stocks_tool(ticker_a: str, ticker_b: str) -> str:
+    """Compare two tickers with headline and quote context."""
+    try:
+        market = MarketDataFetcher()
+        quote_a = market.get_quote(ticker_a)
+        quote_b = market.get_quote(ticker_b)
+        return json.dumps({
+            "ticker_a": quote_a,
+            "ticker_b": quote_b,
+        }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -317,6 +394,60 @@ Format as a strategic planning document.""",
     )
 
 
+def create_chat_scout_task(agent: Agent, ticker: str, user_prompt: str) -> Task:
+    """Create a scout task tailored for chat."""
+    return Task(
+        description=(
+            f"Gather the most relevant signals for {ticker} to answer the user request:\n"
+            f"{user_prompt}\n\n"
+            "Use available tools to surface the most impactful headlines and sentiment."
+        ),
+        expected_output="A concise list of 3-5 relevant headlines and key market themes.",
+        agent=agent,
+    )
+
+
+def create_chat_analyst_task(
+    agent: Agent,
+    context: list,
+    ticker: str,
+    user_prompt: str,
+    risk_profile: str,
+) -> Task:
+    """Create an analyst task for chat responses."""
+    return Task(
+        description=(
+            f"Answer the user's request for {ticker} with explainable, risk-framed analysis.\n"
+            f"User request: {user_prompt}\n"
+            f"Risk profile: {risk_profile}\n"
+            "Include clear assumptions and confidence."
+        ),
+        expected_output="A structured response with TL;DR, why it matters, assumptions, confidence, and next steps.",
+        agent=agent,
+        context=context,
+    )
+
+
+def create_chat_forecast_task(
+    agent: Agent,
+    context: list,
+    user_prompt: str,
+    risk_profile: str,
+) -> Task:
+    """Create a forecast task for chat."""
+    return Task(
+        description=(
+            "Generate a personalized forecast using the user's plan details.\n"
+            f"User request: {user_prompt}\n"
+            f"Risk profile: {risk_profile}\n"
+            "Provide base/bull/super-bull scenarios with key assumptions."
+        ),
+        expected_output="A concise forecast summary with assumptions and risks.",
+        agent=agent,
+        context=context,
+    )
+
+
 # =============================================================================
 # CREW CREATION
 # =============================================================================
@@ -344,6 +475,65 @@ def create_analysis_crew(ticker: str) -> Crew:
         tasks=[scout_task, analyst_task, forecast_task],
         process=Process.sequential,
         verbose=True
+    )
+
+
+def create_chat_crew(context: Dict[str, Any]) -> Crew:
+    """
+    Create a chat-oriented crew based on user intent.
+
+    Context keys:
+    - intent
+    - tickers
+    - risk_profile
+    - user_prompt
+    """
+    intent = context.get("intent", "general")
+    tickers = context.get("tickers", [])
+    ticker = tickers[0] if tickers else "NVDA"
+    risk_profile = context.get("risk_profile", "medium")
+    user_prompt = context.get("user_prompt", "")
+
+    scout = create_scout_agent()
+    analyst = create_analyst_agent()
+    forecaster = create_forecaster_agent()
+
+    if intent == "daily_brief":
+        scout_task = create_chat_scout_task(scout, ticker, user_prompt)
+        analyst_task = create_chat_analyst_task(
+            analyst,
+            context=[scout_task],
+            ticker=ticker,
+            user_prompt=user_prompt,
+            risk_profile=risk_profile,
+        )
+        tasks = [scout_task, analyst_task]
+        agents = [scout, analyst]
+    elif intent == "forecast":
+        forecast_task = create_chat_forecast_task(
+            forecaster,
+            context=[],
+            user_prompt=user_prompt,
+            risk_profile=risk_profile,
+        )
+        tasks = [forecast_task]
+        agents = [forecaster]
+    else:
+        analyst_task = create_chat_analyst_task(
+            analyst,
+            context=[],
+            ticker=ticker,
+            user_prompt=user_prompt,
+            risk_profile=risk_profile,
+        )
+        tasks = [analyst_task]
+        agents = [analyst]
+
+    return Crew(
+        agents=agents,
+        tasks=tasks,
+        process=Process.sequential,
+        verbose=True,
     )
 
 

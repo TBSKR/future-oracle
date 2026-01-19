@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 import sys
 import os
 import logging
+import uuid
+from typing import Optional
 
 # Suppress ScriptRunContext warnings from ThreadPoolExecutor threads
 # These are harmless warnings that occur when using threading with Streamlit
@@ -42,17 +44,21 @@ required_keys = [
 missing_keys = [key for key in required_keys if not os.getenv(key)]
 
 from data.market import MarketDataFetcher
+from data.news import NewsAggregator
 from data.db import Database
 from core.portfolio import PortfolioManager
 from core.grok_client import GrokClient
+from memory.chat_memory import ChatMemory
+from orchestrator import ChatOrchestrator
 
 # CrewAI integration
 try:
-    from agents.crew_setup import create_analysis_crew
+    from agents.crew_setup import create_analysis_crew, create_chat_crew
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False
     create_analysis_crew = None
+    create_chat_crew = None
 
 # Page config
 st.set_page_config(
@@ -61,15 +67,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Display configuration errors if any
-if missing_keys:
-    st.error(
-        f"⚠️ **Missing Required API Keys:** {', '.join(missing_keys)}\n\n"
-        f"Please add these keys to `config/.env` and restart the application.\n\n"
-        f"See `config/.env.example` for the template."
-    )
-    st.stop()
 
 # ========== SESSION STATE INITIALIZATION ==========
 def init_session_state():
@@ -87,6 +84,13 @@ def init_session_state():
         # Daily Brief selections
         "days_back": 1,
         "max_analyses": 5,
+
+        # Chat state
+        "chat_history": [],
+        "user_profile": {"risk": None, "horizon": None},
+        "user_plan": {},
+        "onboarding_step": "ask_horizon",
+        "chat_session_id": str(uuid.uuid4()),
     }
 
     for key, default in defaults.items():
@@ -95,11 +99,18 @@ def init_session_state():
 
 init_session_state()
 
+if "page" not in st.session_state:
+    st.session_state.page = "💬 Chat (Home)"
+
+if st.session_state.user_profile.get("risk") and st.session_state.user_profile.get("horizon"):
+    st.session_state.onboarding_step = None
+
 # Initialize components
 @st.cache_resource
 def init_components():
     """Initialize all components (cached)"""
     market = MarketDataFetcher()
+    news = NewsAggregator()
     db = Database()
     portfolio = PortfolioManager(db)
     try:
@@ -121,9 +132,15 @@ def init_components():
     except Exception:
         analyst = None
 
-    return market, db, portfolio, grok, scout, analyst
+    try:
+        from agents.forecaster import ForecasterAgent  # type: ignore
+        forecaster = ForecasterAgent(grok_client=grok)
+    except Exception:
+        forecaster = None
 
-market, db, portfolio, grok, scout, analyst = init_components()
+    return market, db, portfolio, grok, scout, analyst, news, forecaster
+
+market, db, portfolio, grok, scout, analyst, news, forecaster = init_components()
 
 @st.cache_resource
 def get_vector_memory():
@@ -141,10 +158,35 @@ def get_vector_memory_with_warning():
         st.warning("Pinecone unavailable - memory disabled")
     return memory
 
+vector_memory = get_vector_memory()
+chat_memory = ChatMemory(db, vector_memory)
+chat_orchestrator = ChatOrchestrator(
+    market=market,
+    news=news,
+    portfolio=portfolio,
+    grok_client=grok,
+    chat_memory=chat_memory,
+    crew_available=CREWAI_AVAILABLE,
+    crew_factory=create_chat_crew,
+    scout=scout,
+    analyst=analyst,
+    forecaster=forecaster,
+)
+
 # Load configuration
 config_path = Path(__file__).parent.parent / "config" / "watchlist.yaml"
 with open(config_path, "r") as f:
     watchlist_config = yaml.safe_load(f)
+
+def _build_watch_keywords(config: dict) -> list:
+    keywords = []
+    for stock in config.get("public_stocks", []):
+        keywords.append(stock.get("ticker"))
+        keywords.append(stock.get("name"))
+        keywords.extend(stock.get("keywords", []))
+    return [k for k in dict.fromkeys(keywords) if k]
+
+watch_keywords = _build_watch_keywords(watchlist_config)
 
 # Check for high-impact alerts
 @st.cache_data(ttl=300)  # Cache for 5 minutes
@@ -170,12 +212,12 @@ def check_high_impact_alerts():
 
 # Title and header
 st.title("🔮 FutureOracle")
-st.markdown("**Your Grok-Powered Alpha Investment Engine**")
+st.markdown("**Chat-first investment intelligence with explainability built in.**")
 
 # High-impact alert banner
 high_impact_signals = check_high_impact_alerts()
 if high_impact_signals:
-    st.warning(f"🚨 **{len(high_impact_signals)} High-Impact Signal(s) Detected!** Check Daily Brief for details.")
+    st.warning(f"🚨 **{len(high_impact_signals)} High-Impact Signal(s) Detected!** Check Signals for details.")
 
 st.markdown("---")
 
@@ -220,12 +262,83 @@ def clear_all_caches():
     st.session_state.analyses = []
     st.cache_data.clear()
 
+def _append_chat_message(role: str, content: str) -> None:
+    st.session_state.chat_history.append({"role": role, "content": content})
+
+def _parse_onboarding_horizon(text: str) -> Optional[str]:
+    lowered = text.lower()
+    if "short" in lowered:
+        return "short"
+    if "medium" in lowered:
+        return "medium"
+    if "long" in lowered:
+        return "long"
+    return None
+
+def _parse_onboarding_risk(text: str) -> Optional[str]:
+    lowered = text.lower()
+    if "low" in lowered or "conservative" in lowered:
+        return "low"
+    if "medium" in lowered or "balanced" in lowered:
+        return "medium"
+    if "high" in lowered or "aggressive" in lowered:
+        return "high"
+    return None
+
+def _handle_onboarding(user_input: str) -> bool:
+    step = st.session_state.onboarding_step
+    if not step:
+        return False
+
+    if step == "ask_horizon":
+        horizon = _parse_onboarding_horizon(user_input)
+        if horizon:
+            st.session_state.user_profile["horizon"] = horizon
+            st.session_state.onboarding_step = "ask_risk"
+            _append_chat_message(
+                "assistant",
+                "Got it. What’s your risk comfort: low, medium, or high?",
+            )
+        else:
+            _append_chat_message(
+                "assistant",
+                "I didn’t catch that. Is your time horizon short, medium, or long?",
+            )
+        return True
+
+    if step == "ask_risk":
+        risk = _parse_onboarding_risk(user_input)
+        if risk:
+            st.session_state.user_profile["risk"] = risk
+            st.session_state.onboarding_step = None
+            _append_chat_message(
+                "assistant",
+                "Thanks. I’ll tailor guidance to your horizon and risk comfort.",
+            )
+        else:
+            _append_chat_message(
+                "assistant",
+                "Please choose low, medium, or high risk comfort.",
+            )
+        return True
+
+    return False
+
 # Sidebar
 with st.sidebar:
     st.header("Navigation")
     page = st.radio(
         "Select View",
-        ["📊 Overview", "📈 Watchlist", "📰 Daily Brief", "📚 Historical Analyses", "💼 Portfolio", "🔮 Forecasts", "🧪 Grok Test"]
+        [
+            "💬 Chat (Home)",
+            "📊 Overview",
+            "📈 Watchlist",
+            "📰 Signals",
+            "💼 Portfolio",
+            "🔮 Forecasts",
+            "⚙️ Settings",
+        ],
+        key="page",
     )
     
     st.markdown("---")
@@ -317,8 +430,96 @@ def _display_analysis_card(analysis: dict, is_high_impact: bool = False):
                 if scenario != "N/A":
                     st.markdown(f"- **{timeframe}:** {scenario}")
 
+# ========== CHAT PAGE ==========
+if page == "💬 Chat (Home)":
+    col_chat, col_context = st.columns([3, 1])
+
+    with col_chat:
+        if not st.session_state.chat_history:
+            if st.session_state.onboarding_step:
+                greeting = (
+                    "Welcome to FutureOracle. Ask me anything about markets, signals, or your portfolio.\n\n"
+                    "To tailor risk framing, what’s your time horizon: short, medium, or long?"
+                )
+            else:
+                greeting = (
+                    "Welcome to FutureOracle. Ask me anything about markets, signals, or your portfolio."
+                )
+            _append_chat_message("assistant", greeting)
+
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        user_input = st.chat_input("Ask about today’s signals, a ticker, or your plan…")
+        if user_input:
+            _append_chat_message("user", user_input)
+
+            handled = _handle_onboarding(user_input)
+            if not handled:
+                response = chat_orchestrator.handle_message(
+                    user_input,
+                    {
+                        "session_id": st.session_state.chat_session_id,
+                        "user_profile": st.session_state.user_profile,
+                        "user_plan": st.session_state.user_plan,
+                        "known_tickers": [s["ticker"] for s in watchlist_config.get("public_stocks", [])],
+                        "watch_keywords": watch_keywords,
+                    },
+                )
+                st.session_state.user_profile = response["profile"]
+                st.session_state.user_plan = response["plan"]
+                _append_chat_message("assistant", response["response"])
+
+            st.rerun()
+
+    with col_context:
+        st.subheader("Context Panel")
+        st.markdown("**Data health**")
+        if missing_keys:
+            for key in required_keys:
+                ok = key not in missing_keys
+                st.markdown(f"{'✅' if ok else '⚠️'} {key}")
+        else:
+            st.markdown("✅ All API keys configured")
+        last_refresh = st.session_state.get("last_analysis_timestamp")
+        if last_refresh:
+            st.caption(f"Last refresh: {last_refresh.strftime('%H:%M:%S')}")
+        else:
+            st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+
+        st.markdown("---")
+        st.markdown("**Portfolio snapshot**")
+        try:
+            summary = portfolio.get_portfolio_summary()
+            st.metric("Total Value", f"€{summary.get('total_value', 0):,.0f}")
+            st.caption(f"Positions: {summary.get('position_count', 0)}")
+        except Exception as exc:
+            st.caption(f"Portfolio unavailable: {exc}")
+
+        st.markdown("---")
+        st.markdown("**Today's top signal**")
+        if high_impact_signals:
+            top_signal = high_impact_signals[0]
+            st.markdown(f"**{top_signal.get('article_title', 'Signal')}**")
+            st.caption(top_signal.get("key_insight", "High-impact signal detected."))
+        else:
+            st.caption("No high-impact signals detected.")
+
+        st.markdown("---")
+        st.markdown("**Suggested navigation**")
+        if st.button("Open Signals", use_container_width=True, key="nav_signals"):
+            st.session_state.page = "📰 Signals"
+            st.rerun()
+        if st.button("Open Portfolio", use_container_width=True, key="nav_portfolio"):
+            st.session_state.page = "💼 Portfolio"
+            st.rerun()
+        if st.button("Open Forecasts", use_container_width=True, key="nav_forecasts"):
+            st.session_state.page = "🔮 Forecasts"
+            st.rerun()
+
 # ========== OVERVIEW PAGE ==========
-if page == "📊 Overview":
+elif page == "📊 Overview":
     st.header("Market Overview")
     
     # Portfolio metrics
@@ -485,9 +686,11 @@ elif page == "📈 Watchlist":
         except Exception as e:
             st.error(f"Error loading {selected_ticker}: {e}")
 
-# ========== DAILY BRIEF PAGE ==========
-elif page == "📰 Daily Brief":
-    st.header("Daily Breakthrough Signals + CrewAI Analysis")
+# ========== SIGNALS PAGE ==========
+elif page == "📰 Signals":
+    st.header("Signals")
+    st.caption("Daily brief and historical context")
+    st.markdown("---")
 
     # Check if CrewAI is available with required keys
     xai_key_present = bool(os.getenv("XAI_API_KEY"))
@@ -735,9 +938,8 @@ elif page == "📰 Daily Brief":
             for analysis in regular:
                 _display_analysis_card(analysis, is_high_impact=False)
 
-# ========== HISTORICAL ANALYSES PAGE ==========
-elif page == "📚 Historical Analyses":
-    st.header("Historical Analyses")
+    st.markdown("---")
+    st.subheader("Historical Analyses")
     st.markdown("Explore prior analyses stored in Pinecone for deeper context.")
 
     memory = get_vector_memory()
@@ -896,16 +1098,14 @@ elif page == "🔮 Forecasts":
     st.header("🔮 Long-Term Wealth Forecasts")
     st.markdown("**Personalized scenarios for your exponential wealth journey**")
     
-    try:
-        from agents.forecaster import ForecasterAgent  # type: ignore
-    except Exception:
+    if not forecaster:
         st.error("Forecaster agent is unavailable (missing optional dependencies).")
         st.info("Fix by installing requirements into the active venv, then restart the app.")
         st.stop()
     
     # Initialize Forecaster
-    if 'forecaster' not in st.session_state:
-        st.session_state.forecaster = ForecasterAgent(grok_client=grok)
+    if "forecaster" not in st.session_state:
+        st.session_state.forecaster = forecaster
     forecaster = st.session_state.forecaster
     
     st.markdown("---")
@@ -1090,19 +1290,27 @@ elif page == "🔮 Forecasts":
     else:
         st.info("👆 Enter your investment plan above and click 'Generate Forecasts' to see your personalized scenarios.")
 
-# ========== GROK TEST PAGE ==========
-elif page == "🧪 Grok Test":
-    st.header("Grok API Test")
-    
+# ========== SETTINGS PAGE ==========
+elif page == "⚙️ Settings":
+    st.header("Settings")
+
+    st.subheader("API Key Status")
+    for key in required_keys:
+        ok = key not in missing_keys
+        st.markdown(f"{'✅' if ok else '⚠️'} {key}")
+
+    st.markdown("---")
+    st.subheader("Grok API Test")
+
     if not grok:
         st.error("❌ Grok API not configured. Add XAI_API_KEY to config/.env")
         st.info("Get your API key from: https://x.ai/api")
     else:
         st.success("✅ Grok API client initialized")
-        
+
         st.markdown("---")
         st.subheader("Test Prompt")
-        
+
         # Predefined test prompts
         test_prompts = {
             "Humanoid Robotics Summary": "Summarize the latest developments in humanoid robotics and their investment implications in 2-3 sentences.",
@@ -1110,15 +1318,15 @@ elif page == "🧪 Grok Test":
             "Longevity Biotech": "What are the most promising longevity biotech breakthroughs and which companies are leading?",
             "Custom": ""
         }
-        
+
         prompt_choice = st.selectbox("Select test prompt", list(test_prompts.keys()))
-        
+
         if prompt_choice == "Custom":
             user_prompt = st.text_area("Enter your prompt", height=100)
         else:
             user_prompt = test_prompts[prompt_choice]
             st.text_area("Prompt", user_prompt, height=100, disabled=True)
-        
+
         if st.button("Send to Grok", type="primary"):
             if user_prompt:
                 with st.spinner("Thinking..."):
@@ -1129,12 +1337,12 @@ elif page == "🧪 Grok Test":
                             temperature=0.7,
                             max_tokens=500
                         )
-                        
+
                         st.markdown("### Grok Response:")
                         st.markdown(response)
-                        
+
                         st.success("✅ API call successful")
-                    
+
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
             else:
@@ -1142,4 +1350,4 @@ elif page == "🧪 Grok Test":
 
 # Footer
 st.markdown("---")
-st.caption(f"FutureOracle v0.3 | Week 2: Scout→Analyst Pipeline | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"FutureOracle v0.4 | Chat-first interface | {datetime.now().strftime('%Y-%m-%d %H:%M')}")

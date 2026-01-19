@@ -103,6 +103,20 @@ class Database:
                 fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Chat history (assistive memory fallback when vector memory is unavailable)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                intent TEXT,
+                tickers TEXT,
+                metadata_json TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         
         self.conn.commit()
         self.logger.info("Database schema initialized")
@@ -379,3 +393,52 @@ class Database:
         if self.conn:
             self.conn.close()
             self.logger.info("Database connection closed")
+
+    # ========== Chat History ==========
+
+    def save_chat_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        intent: Optional[str] = None,
+        tickers: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Persist a chat message for local fallback memory."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO chat_history (session_id, role, content, intent, tickers, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            session_id,
+            role,
+            content,
+            intent,
+            ",".join(tickers or []),
+            str(metadata or {}),
+        ))
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_recent_chat_messages(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent chat messages for a session."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM chat_history
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (session_id, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def search_chat_messages(self, query_text: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Basic LIKE search for fallback chat memory."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM chat_history
+            WHERE content LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (f"%{query_text}%", limit))
+        return [dict(row) for row in cursor.fetchall()]
