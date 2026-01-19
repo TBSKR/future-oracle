@@ -142,8 +142,8 @@ class MarketDataFetcher:
                 "ticker": ticker, 
                 "error": str(e), 
                 "price": None,
-                "change": None,
-                "change_percent": None
+                "change": 0,
+                "change_percent": 0
             }
 
     def get_watchlist_snapshot(self, tickers: List[str]) -> List[Dict[str, Any]]:
@@ -182,7 +182,9 @@ class MarketDataFetcher:
                     results[ticker] = {
                         "ticker": ticker, 
                         "error": str(e),
-                        "price": None
+                        "price": None,
+                        "change": 0,
+                        "change_percent": 0
                     }
         
         # Return in original order
