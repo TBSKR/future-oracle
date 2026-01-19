@@ -28,7 +28,7 @@ class GrokClient:
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: str = "grok-beta",
+        model: Optional[str] = None,
         max_retries: int = 3
     ):
         """
@@ -37,12 +37,12 @@ class GrokClient:
         Args:
             api_key: xAI API key (defaults to XAI_API_KEY env var)
             base_url: API base URL (defaults to XAI_API_BASE env var)
-            model: Model name to use
+            model: Model name to use (defaults to XAI_MODEL env var, then "grok-beta")
             max_retries: Maximum number of retry attempts
         """
         self.api_key = api_key or os.getenv("XAI_API_KEY")
         self.base_url = base_url or os.getenv("XAI_API_BASE", "https://api.x.ai/v1")
-        self.model = model
+        self.model = model or os.getenv("XAI_MODEL", "grok-beta")
         self.max_retries = max_retries
         
         if not self.api_key:
