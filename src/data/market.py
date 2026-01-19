@@ -160,13 +160,30 @@ class MarketDataFetcher:
         
         results: Dict[str, Dict[str, Any]] = {}
         
+        # Try to get Streamlit context for thread propagation
+        try:
+            from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+            streamlit_ctx = get_script_run_ctx()
+            
+            # Create a context-aware wrapper that sets up context before running
+            def context_aware_fetch(ticker: str) -> Dict[str, Any]:
+                # Attach context to current thread at start of execution
+                import threading
+                add_script_run_ctx(threading.current_thread(), streamlit_ctx)
+                return self._safe_get_quote(ticker)
+            
+            fetch_func = context_aware_fetch
+        except Exception:
+            # Fall back to regular fetch if Streamlit context unavailable
+            fetch_func = self._safe_get_quote
+        
         # Reduced workers to avoid overwhelming API even with rate limiting
         max_workers = min(len(tickers), 4)
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
+            # Submit all tasks using context-aware function
             future_to_ticker = {
-                executor.submit(self._safe_get_quote, ticker): ticker 
+                executor.submit(fetch_func, ticker): ticker 
                 for ticker in tickers
             }
             
