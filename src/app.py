@@ -25,9 +25,6 @@ from data.market import MarketDataFetcher
 from data.db import Database
 from core.portfolio import PortfolioManager
 from core.grok_client import GrokClient
-from agents.scout import ScoutAgent
-from agents.analyst import AnalystAgent
-from agents.forecaster import ForecasterAgent
 
 # Page config
 st.set_page_config(
@@ -48,8 +45,21 @@ def init_components():
         grok = GrokClient()
     except:
         grok = None
-    scout = ScoutAgent()
-    analyst = AnalystAgent(grok_client=grok)
+
+    # Lazy-import agents so the dashboard can still start even if optional
+    # AI dependencies aren't installed in the environment.
+    try:
+        from agents.scout import ScoutAgent  # type: ignore
+        scout = ScoutAgent()
+    except Exception:
+        scout = None
+
+    try:
+        from agents.analyst import AnalystAgent  # type: ignore
+        analyst = AnalystAgent(grok_client=grok)
+    except Exception:
+        analyst = None
+
     return market, db, portfolio, grok, scout, analyst
 
 market, db, portfolio, grok, scout, analyst = init_components()
@@ -63,6 +73,8 @@ with open(config_path, "r") as f:
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def check_high_impact_alerts():
     """Check for high-impact signals in the last 24 hours"""
+    if not scout or not analyst:
+        return []
     try:
         scout_result = scout.execute({"days_back": 1, "max_results": 10, "min_relevance": 7})
         if scout_result.get("success") and scout_result.get("articles"):
@@ -318,6 +330,11 @@ elif page == "📈 Watchlist":
 # ========== DAILY BRIEF PAGE ==========
 elif page == "📰 Daily Brief":
     st.header("Daily Breakthrough Signals + Grok Analysis")
+
+    if not scout or not analyst:
+        st.error("Scout/Analyst agents are unavailable (missing optional dependencies).")
+        st.info("Fix by installing requirements into the active venv, then restart the app.")
+        st.stop()
     
     col1, col2, col3 = st.columns([2, 1, 1])
     
@@ -498,8 +515,12 @@ elif page == "🔮 Forecasts":
     st.header("🔮 Long-Term Wealth Forecasts")
     st.markdown("**Personalized scenarios for your exponential wealth journey**")
     
-    # Import Forecaster
-    from agents.forecaster import ForecasterAgent
+    try:
+        from agents.forecaster import ForecasterAgent  # type: ignore
+    except Exception:
+        st.error("Forecaster agent is unavailable (missing optional dependencies).")
+        st.info("Fix by installing requirements into the active venv, then restart the app.")
+        st.stop()
     
     # Initialize Forecaster
     if 'forecaster' not in st.session_state:

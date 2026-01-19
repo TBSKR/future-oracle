@@ -7,10 +7,15 @@ Handles authentication, rate limiting, retries, and error handling.
 
 import os
 from typing import Dict, Any, Optional, List
-from openai import OpenAI
+import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 
+try:
+    # Optional dependency. If unavailable, we fall back to raw HTTP calls.
+    from openai import OpenAI  # type: ignore
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
 
 class GrokClient:
     """
@@ -43,13 +48,24 @@ class GrokClient:
         if not self.api_key:
             raise ValueError("XAI_API_KEY not found in environment variables")
         
-        # Initialize OpenAI client with xAI endpoint
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
-        
         self.logger = logging.getLogger("futureoracle.grok_client")
+
+        # Initialize OpenAI SDK client when available; otherwise use raw HTTP.
+        self._use_openai_sdk = OpenAI is not None
+        if self._use_openai_sdk:
+            # Initialize OpenAI client with xAI endpoint
+            self.client = OpenAI(  # type: ignore[misc]
+                api_key=self.api_key,
+                base_url=self.base_url,
+            )
+            self._session = None
+        else:
+            self.client = None
+            self._session = requests.Session()
+            self.logger.warning(
+                "openai package not installed; GrokClient falling back to raw HTTP requests."
+            )
+        
         self.logger.info(f"GrokClient initialized with model: {self.model}")
     
     @retry(
@@ -76,15 +92,37 @@ class GrokClient:
             Generated text response
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs
-            )
-            
-            content = response.choices[0].message.content
+            if self._use_openai_sdk and self.client is not None:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **kwargs,
+                )
+                content = response.choices[0].message.content
+            else:
+                # Raw OpenAI-compatible endpoint call.
+                url = f"{self.base_url.rstrip('/')}/chat/completions"
+                payload: Dict[str, Any] = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                payload.update(kwargs)
+
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+
+                assert self._session is not None
+                r = self._session.post(url, json=payload, headers=headers, timeout=60)
+                r.raise_for_status()
+                data = r.json()
+                content = data["choices"][0]["message"]["content"]
+
             self.logger.debug(f"Generated {len(content)} characters")
             return content
             
