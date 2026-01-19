@@ -15,6 +15,7 @@ import sys
 import os
 import logging
 import uuid
+import threading
 from typing import Optional
 
 # Suppress ScriptRunContext warnings from ThreadPoolExecutor threads
@@ -91,6 +92,11 @@ def init_session_state():
         "user_plan": {},
         "onboarding_step": "ask_horizon",
         "chat_session_id": str(uuid.uuid4()),
+
+        # Background alert loading
+        "high_impact_signals": None,  # Will store alert results
+        "alerts_loading": False,      # Track if background load in progress
+        "alerts_thread_started": False,  # Prevent duplicate thread starts
     }
 
     for key, default in defaults.items():
@@ -210,13 +216,36 @@ def check_high_impact_alerts():
         st.error(f"Error checking alerts: {e}")
     return []
 
+def _start_alert_check_thread():
+    """Start background thread to check alerts (non-blocking)"""
+    if st.session_state.get("alerts_thread_started"):
+        return  # Already started
+    
+    st.session_state.alerts_thread_started = True
+    st.session_state.alerts_loading = True
+    
+    def _background_alert_check():
+        try:
+            alerts = check_high_impact_alerts()
+            st.session_state.high_impact_signals = alerts
+        except Exception:
+            st.session_state.high_impact_signals = []
+        finally:
+            st.session_state.alerts_loading = False
+    
+    thread = threading.Thread(target=_background_alert_check, daemon=True)
+    thread.start()
+
 # Title and header
 st.title("🔮 FutureOracle")
 st.markdown("**Chat-first investment intelligence with explainability built in.**")
 
-# High-impact alert banner
-high_impact_signals = check_high_impact_alerts()
-if high_impact_signals:
+# High-impact alert banner (non-blocking background check)
+_start_alert_check_thread()
+high_impact_signals = st.session_state.get("high_impact_signals")
+if st.session_state.get("alerts_loading"):
+    st.info("⏳ Checking for high-impact alerts...")
+elif high_impact_signals:
     st.warning(f"🚨 **{len(high_impact_signals)} High-Impact Signal(s) Detected!** Check Signals for details.")
 
 st.markdown("---")
@@ -499,7 +528,9 @@ if page == "💬 Chat (Home)":
 
         st.markdown("---")
         st.markdown("**Today's top signal**")
-        if high_impact_signals:
+        if st.session_state.get("alerts_loading"):
+            st.caption("⏳ Loading alerts...")
+        elif high_impact_signals:
             top_signal = high_impact_signals[0]
             st.markdown(f"**{top_signal.get('article_title', 'Signal')}**")
             st.caption(top_signal.get("key_insight", "High-impact signal detected."))
@@ -556,7 +587,10 @@ elif page == "📊 Overview":
     st.markdown("---")
     
     # High-impact signals section
-    if high_impact_signals:
+    if st.session_state.get("alerts_loading"):
+        st.subheader("🚨 High-Impact Signals")
+        st.info("⏳ Checking for high-impact signals...")
+    elif high_impact_signals:
         st.subheader("🚨 High-Impact Signals (Impact ≥ 8/10)")
         for signal in high_impact_signals[:3]:
             with st.expander(f"⚡ {signal['impact_score']}/10 - {signal['article_title']}", expanded=True):
