@@ -8,7 +8,7 @@ langchain-openai>=0.0.8,<0.2.0
 openai>=1.13.3,<2.0.0  # For xAI Grok API (OpenAI-compatible)
 
 # Data & Market
-yfinance==0.2.36
+# yfinance removed - using Finnhub API
 pandas==2.2.0
 numpy==1.26.4
 
