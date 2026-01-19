@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Optional
 
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
 
 from data.finnhub_client import FinnhubClient
@@ -20,6 +20,18 @@ from data.reddit_client import RedditClient
 # Lazy-loaded Finnhub client
 _finnhub_client: Optional[FinnhubClient] = None
 _reddit_client: Optional[RedditClient] = None
+
+
+def _get_xai_llm() -> LLM:
+    """Get LLM configured for X.AI (Grok) API."""
+    api_key = os.getenv("XAI_API_KEY")
+    if not api_key:
+        raise ValueError("XAI_API_KEY not set")
+    return LLM(
+        model="xai/grok-beta",
+        api_key=api_key,
+        base_url="https://api.x.ai/v1"
+    )
 
 
 def _get_finnhub_client() -> FinnhubClient:
@@ -133,13 +145,14 @@ def create_scout_agent() -> Agent:
     return Agent(
         role="Market Intelligence Scout",
         goal="Gather breakthrough news, sentiment signals, and social media buzz for the target ticker.",
-        backstory="""You are an expert signal detection specialist focused on exponential 
-technologies: AI, humanoid robotics, longevity biotech, and semiconductors. Your mission 
-is to scan news sources and surface only breakthrough moments—major product launches, 
-clinical trial results, regulatory approvals, partnership announcements, and technology 
-leaps. You filter noise ruthlessly and prioritize high-impact signals that could move 
+        backstory="""You are an expert signal detection specialist focused on exponential
+technologies: AI, humanoid robotics, longevity biotech, and semiconductors. Your mission
+is to scan news sources and surface only breakthrough moments—major product launches,
+clinical trial results, regulatory approvals, partnership announcements, and technology
+leaps. You filter noise ruthlessly and prioritize high-impact signals that could move
 markets or indicate long-term paradigm shifts.""",
         tools=[finnhub_news_tool, finnhub_sentiment_tool, reddit_sentiment_tool],
+        llm=_get_xai_llm(),
         verbose=True,
         allow_delegation=False
     )
@@ -150,12 +163,13 @@ def create_analyst_agent() -> Agent:
     return Agent(
         role="Deep Alpha Investment Analyst",
         goal="Analyze the impact of market signals and predict short-term price movements with conviction ratings.",
-        backstory="""You are a sharp, optimistic-realistic investment analyst focused on 
-exponential technologies. You rate breakthrough impact on a scale of 1-10, predict 
-short-term price movements, flag key risks, and model long-term scenarios. You stay 
-grounded in evidence while thinking in decades. Your analysis style combines quantitative 
+        backstory="""You are a sharp, optimistic-realistic investment analyst focused on
+exponential technologies. You rate breakthrough impact on a scale of 1-10, predict
+short-term price movements, flag key risks, and model long-term scenarios. You stay
+grounded in evidence while thinking in decades. Your analysis style combines quantitative
 rigor with qualitative insight about technology adoption curves and market dynamics.""",
         tools=[],
+        llm=_get_xai_llm(),
         verbose=True,
         allow_delegation=False
     )
@@ -166,12 +180,13 @@ def create_forecaster_agent() -> Agent:
     return Agent(
         role="Long-Term Scenarios Forecaster",
         goal="Generate personalized investment scenarios across Base, Bull, and Super-Bull cases.",
-        backstory="""You are an expert at modeling exponential growth in breakthrough 
-technologies. You understand compound growth, technology adoption S-curves, and how 
-breakthrough events cascade into long-term value creation. You create Base (conservative), 
-Bull (optimistic), and Super-Bull (exponential breakthrough) scenarios that help investors 
+        backstory="""You are an expert at modeling exponential growth in breakthrough
+technologies. You understand compound growth, technology adoption S-curves, and how
+breakthrough events cascade into long-term value creation. You create Base (conservative),
+Bull (optimistic), and Super-Bull (exponential breakthrough) scenarios that help investors
 understand the range of possible outcomes over 5, 10, and 20 year timeframes.""",
         tools=[],
+        llm=_get_xai_llm(),
         verbose=True,
         allow_delegation=False
     )

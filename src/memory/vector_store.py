@@ -10,7 +10,7 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:
     from openai import OpenAI  # type: ignore
@@ -18,9 +18,9 @@ except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore
 
 try:
-    import pinecone  # type: ignore
+    from pinecone import Pinecone  # type: ignore
 except Exception:  # pragma: no cover
-    pinecone = None  # type: ignore
+    Pinecone = None  # type: ignore
 
 
 class VectorMemory:
@@ -29,38 +29,38 @@ class VectorMemory:
 
     Required env vars:
     - PINECONE_API_KEY
-    - PINECONE_ENV
+    - PINECONE_INDEX_NAME
     - OPENAI_API_KEY
     """
 
     def __init__(
         self,
-        index_name: str = "futureoracle-analyses",
+        index_name: Optional[str] = None,
         namespace: str = "analyses",
         dimension: int = 1536,
         metric: str = "cosine",
         embedding_model: str = "text-embedding-3-small",
         api_key: Optional[str] = None,
-        environment: Optional[str] = None,
         openai_api_key: Optional[str] = None,
     ):
         self.logger = logging.getLogger("futureoracle.vector_memory")
 
         self.api_key = api_key or os.getenv("PINECONE_API_KEY")
-        self.environment = environment or os.getenv("PINECONE_ENV")
+        self.index_name = index_name or os.getenv("PINECONE_INDEX_NAME")
         self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
 
         if not self.api_key:
             raise ValueError("PINECONE_API_KEY not set")
-        if not self.environment:
-            raise ValueError("PINECONE_ENV not set")
+        if not self.index_name:
+            raise ValueError("PINECONE_INDEX_NAME not set")
         if OpenAI is None:
             raise ImportError("openai package not installed")
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY not set")
+        if Pinecone is None:
+            raise ImportError("pinecone-client not installed")
 
         self.embedding_model = embedding_model
-        self.index_name = index_name
         self.namespace = namespace
         self.dimension = dimension
         self.metric = metric
@@ -139,40 +139,9 @@ class VectorMemory:
         return [self._normalize_match(match) for match in matches]
 
     def _init_pinecone_index(self):
-        if pinecone is None:
-            raise ImportError("pinecone-client not installed")
-
-        if hasattr(pinecone, "init"):
-            pinecone.init(api_key=self.api_key, environment=self.environment)
-            existing = pinecone.list_indexes()
-            if isinstance(existing, dict):
-                existing = existing.get("indexes", [])
-            if self.index_name not in existing:
-                pinecone.create_index(
-                    name=self.index_name,
-                    dimension=self.dimension,
-                    metric=self.metric,
-                )
-            return pinecone.Index(self.index_name)
-
-        try:
-            from pinecone import Pinecone, ServerlessSpec  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise ImportError("pinecone-client not installed") from exc
-
-        client = Pinecone(api_key=self.api_key)
-        existing = [index.name for index in client.list_indexes()]
-
-        if self.index_name not in existing:
-            cloud, region = self._parse_environment(self.environment)
-            client.create_index(
-                name=self.index_name,
-                dimension=self.dimension,
-                metric=self.metric,
-                spec=ServerlessSpec(cloud=cloud, region=region),
-            )
-
-        return client.Index(self.index_name)
+        """Initialize Pinecone index using v3 client syntax."""
+        pc = Pinecone(api_key=self.api_key)
+        return pc.Index(self.index_name)
 
     def _embed_text(self, text: str) -> List[float]:
         if not text:
@@ -217,11 +186,3 @@ class VectorMemory:
         if len(text) <= max_length:
             return text
         return text[: max_length - 3].rstrip() + "..."
-
-    def _parse_environment(self, environment: str) -> Tuple[str, str]:
-        parts = environment.split("-")
-        if parts and parts[-1] in {"aws", "gcp", "azure"}:
-            cloud = parts[-1]
-            region = "-".join(parts[:-1])
-            return cloud, region
-        return "aws", environment

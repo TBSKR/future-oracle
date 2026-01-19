@@ -118,9 +118,19 @@ market, db, portfolio, grok, scout, analyst = init_components()
 
 @st.cache_resource
 def get_vector_memory():
-    """Initialize Pinecone vector memory (cached)."""
-    from memory.vector_store import VectorMemory  # type: ignore
-    return VectorMemory()
+    """Initialize Pinecone vector memory (cached). Returns None if unavailable."""
+    try:
+        from memory.vector_store import VectorMemory  # type: ignore
+        return VectorMemory()
+    except Exception as e:
+        return None
+
+def get_vector_memory_with_warning():
+    """Get vector memory, showing warning if unavailable."""
+    memory = get_vector_memory()
+    if memory is None:
+        st.warning("Pinecone unavailable - memory disabled")
+    return memory
 
 # Load configuration
 config_path = Path(__file__).parent.parent / "config" / "watchlist.yaml"
@@ -470,12 +480,23 @@ elif page == "📈 Watchlist":
 elif page == "📰 Daily Brief":
     st.header("Daily Breakthrough Signals + CrewAI Analysis")
 
-    # Check if CrewAI is available
-    if CREWAI_AVAILABLE:
+    # Check if CrewAI is available with required keys
+    xai_key_present = bool(os.getenv("XAI_API_KEY"))
+    finnhub_key_present = bool(os.getenv("FINNHUB_API_KEY"))
+
+    if CREWAI_AVAILABLE and xai_key_present and finnhub_key_present:
         st.success("CrewAI multi-agent system active")
         use_crewai = True
+    elif CREWAI_AVAILABLE and not (xai_key_present and finnhub_key_present):
+        missing = []
+        if not xai_key_present:
+            missing.append("XAI_API_KEY")
+        if not finnhub_key_present:
+            missing.append("FINNHUB_API_KEY")
+        st.warning(f"CrewAI requires: {', '.join(missing)} - using legacy pipeline")
+        use_crewai = False
     elif scout and analyst:
-        st.warning("CrewAI unavailable - using legacy Scout/Analyst pipeline")
+        st.info("Using Scout/Analyst pipeline")
         use_crewai = False
     else:
         st.error("No analysis agents available (missing dependencies).")
@@ -544,20 +565,23 @@ elif page == "📰 Daily Brief":
                         
                         st.session_state.crew_result = crew_result
 
-                        try:
-                            memory = get_vector_memory()
-                            memory.store_analysis(
-                                ticker=analysis_ticker,
-                                analysis_text=crew_result["raw_output"],
-                                metadata={
-                                    "timestamp": crew_result["timestamp"],
-                                    "ticker": analysis_ticker,
-                                    "analysis_type": "crewai",
-                                    "summary": crew_result["raw_output"][:280]
-                                }
-                            )
-                        except Exception as e:
-                            st.warning(f"Vector memory store skipped: {e}")
+                        memory = get_vector_memory()
+                        if memory is not None:
+                            try:
+                                memory.store_analysis(
+                                    ticker=analysis_ticker,
+                                    analysis_text=crew_result["raw_output"],
+                                    metadata={
+                                        "timestamp": crew_result["timestamp"],
+                                        "ticker": analysis_ticker,
+                                        "analysis_type": "crewai",
+                                        "summary": crew_result["raw_output"][:280]
+                                    }
+                                )
+                            except Exception as e:
+                                st.warning(f"Vector memory store skipped: {e}")
+                        else:
+                            st.warning("Pinecone unavailable - memory disabled")
                         
                         # Cache the result
                         cache_analysis(cache_key, crew_result, days_back, max_analyses)
@@ -707,12 +731,10 @@ elif page == "📚 Historical Analyses":
     st.header("Historical Analyses")
     st.markdown("Explore prior analyses stored in Pinecone for deeper context.")
 
-    try:
-        memory = get_vector_memory()
-    except Exception as e:
-        st.error("Vector memory not configured.")
-        st.info("Set PINECONE_API_KEY, PINECONE_ENV, and OPENAI_API_KEY in config/.env")
-        st.caption(str(e))
+    memory = get_vector_memory()
+    if memory is None:
+        st.warning("Pinecone unavailable - memory disabled")
+        st.info("Set PINECONE_API_KEY, PINECONE_INDEX_NAME, and OPENAI_API_KEY in config/.env")
         st.stop()
 
     tickers = [stock['ticker'] for stock in watchlist_config.get("public_stocks", [])]
